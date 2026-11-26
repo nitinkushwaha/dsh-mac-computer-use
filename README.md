@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/hero.svg" alt="dsh-mac-computer-use — 让 DSH 看着屏幕操作你的 Mac" width="760" />
+<img src="assets/hero.svg" alt="dsh-mac-computer-use — let DSH see the screen and drive your Mac" width="760" />
 
 <p>
   <a href="https://github.com/OrderG-X/dsh-mac-computer-use/releases"><img src="https://img.shields.io/github/v/release/OrderG-X/dsh-mac-computer-use?label=release&color=4D6BFE" alt="release" /></a>
@@ -11,24 +11,22 @@
 
 </div>
 
-**给 DSH 的 Mac 桌面操作能力（computer use）。视觉优先，不依赖无障碍树。**
+**Mac desktop control (computer use) for DSH. Vision-first — no reliance on the accessibility tree.**
 
-> **一句话**：DeepSeek Harness（DSH）插件，让模型看着屏幕操作你的 Mac：列窗口、截图、OCR 找字、点击、打字、按键、滚动、拖拽、打开应用。
+> **In one sentence:** a DeepSeek Harness (DSH) plugin that lets the model look at the screen and operate your Mac: list windows, take screenshots, find text with OCR, click, type, press keys, scroll, drag, and launch apps.
 >
-> **什么时候用**：「看看我屏幕上有什么」「帮我在这个 App 里点一下」，以及没有命令行、只能用鼠标操作的 Mac 软件。
+> **When to use it:** "What's on my screen right now?", "Click this for me in that app" — and Mac software that has no command line and can only be driven with the mouse.
 >
-> **安装**：DSH「插件」页 →「添加插件」，填 `dsh-mac-computer-use`（npm 包，连不上 npm 会自动换国内镜像），重启 DSH。安装包自带编好的程序（Apple 芯片和 Intel 都能用，macOS 11 起），不用编译。仅 macOS。
->
-> **English:** a DeepSeek Harness (DSH) plugin for computer use on macOS. The model sees the screen and controls the Mac through 11 `desktop_*` tools: window list, screenshots, OCR text search, click, type, keys, scroll, drag and app launch. Install: on the DSH Plugins page, click Add plugin and enter `dsh-mac-computer-use` (an npm package), then restart DSH. The package ships prebuilt universal binaries (Apple silicon and Intel, macOS 11+), so there is nothing to compile.
+> **Install:** on the DSH **Plugins** page, click **Add plugin** and enter `dsh-mac-computer-use` (an npm package; if npm can't be reached it automatically falls back to a China mirror), then restart DSH. The package ships prebuilt binaries (Apple silicon and Intel, macOS 11+), so there is nothing to compile. macOS only.
 
-> 以前叫 `dsh-cu`，2026-10-18 改名。旧地址会自动跳到这里；底层的命令行引擎仍叫 `dsh-cu`。
-> 和别人家的 [dsh-computer-use](https://github.com/988hj7tczd-oss/dsh-computer-use) 不是一个东西：那个靠无障碍树（cua-driver），这个靠截图。
+> Previously named `dsh-cu`; renamed on 2026-10-18. Old links redirect here automatically, and the underlying command-line engine is still called `dsh-cu`.
+> This is not the same project as [dsh-computer-use](https://github.com/988hj7tczd-oss/dsh-computer-use): that one drives the accessibility tree (cua-driver), this one works from screenshots.
 
-![光标动效](assets/cursor-demo.gif)
+![Desktop cursor animation](assets/cursor-demo.gif)
 
-*桌面光标：实心蓝箭头 + 带显示器图标的「DSH」名牌，干活时名牌写上正在做什么。跟 [dsh-chrome-bridge](https://github.com/OrderG-X/dsh-chrome-bridge) 的浏览器光标是同一套样式，那边是半透明的、名牌带地球图标。*
+*The desktop cursor: a solid blue arrow plus a "DSH" name tag carrying a display icon; while it works, the name tag spells out what it is doing. Same visual family as the browser cursor in [dsh-chrome-bridge](https://github.com/OrderG-X/dsh-chrome-bridge), which is semi-transparent and wears a globe icon.*
 
-11 个 `desktop_*` 工具 + 一个自包含的 Swift 命令行 + 一个看得见的桌面光标。
+Eleven `desktop_*` tools + a self-contained Swift command line + a visible desktop cursor.
 
 ```
 desktop_windows    desktop_observe    desktop_screenshot   desktop_find_text
@@ -38,37 +36,34 @@ desktop_launch     desktop_scroll     desktop_drag
 
 ---
 
-## 为什么又造一个
+## Why build another one
 
-DSH 上已有的 computer use 插件（`dsh-computer-use`、`dsh-mac-cua` 等）大多依赖 **macOS 无障碍树（AX）**。
-我们实测过：**锁屏时 AX 对所有应用都返回 0 个 AXWindow**，解锁后立刻恢复正常 —— 这是 macOS 的行为，
-不是驱动的 bug（[详细记录](docs/locked-session-and-ax.md)）。另外第三方二进制在某些环境下拿不到 AXWindow。
+Most computer-use plugins already available on DSH (`dsh-computer-use`, `dsh-mac-cua`, …) depend on the **macOS accessibility tree (AX)**. We measured what actually happens: **with the screen locked, AX reports 0 AXWindow elements for every application**, and everything recovers the moment you unlock — that is macOS behavior, not a driver bug ([full write-up](docs/locked-session-and-ax.md)). On top of that, some environments deny AX windows to third-party binaries altogether.
 
-**Codex 那种 computer use 走的是视觉路线**：截图 → 模型看 → 按坐标操作。这条路不碰 AX，
-所以在 AX 不灵的环境下照样能用。这个仓库就是那条路，外加：
+**Codex-style computer use takes the visual route**: screenshot → the model looks → act on coordinates. That route never touches AX, so it keeps working wherever AX does not. This repo is that route, plus:
 
 | | |
 |---|---|
-| **OCR 找文字** | 用 macOS 自带的 Vision 框架，本地跑。`desktop_click(text="登录")` 直接按文字点 |
-| **元素编号** | `desktop_observe` 把可点元素在截图上编号，模型说"点第 7 个"就行 |
-| **做完说一声变了什么** | 点击、输入、按键、拖拽之后顺带回报窗口变化（新开了「存储」窗口、标题变了、窗口关了），模型不用每次再截图确认 |
-| **看得见的光标** | 屏幕上有个蓝色光标跟着操作走，名牌写着「点击 发送」这类动作；跟浏览器插件的光标一套样式 |
-| **空闲自退** | 光标浮层 60 秒没动静自己走，不留常驻进程 |
-| **单文件 Swift** | 零依赖，好审计 |
+| **OCR text targeting** | Runs locally on Apple's built-in Vision framework. `desktop_click(text="Sign in")` clicks straight through a text label |
+| **Numbered elements** | `desktop_observe` numbers the clickable elements on the screenshot; the model just says "click number 7" |
+| **Reports what changed** | After every click, type, key press or drag it also reports window changes (a "Save" sheet opened, a title changed, a window closed) — no extra screenshot needed just to confirm |
+| **A visible cursor** | A blue cursor on screen follows every action, its name tag showing moves like "Click · Send"; same visual family as the browser plugin's cursor |
+| **Retires itself when idle** | The cursor overlay leaves on its own after 60 idle seconds — no resident process left behind |
+| **Single-file Swift** | Zero dependencies, easy to audit |
 
 ---
 
-## 安装
+## Install
 
-在 DSH 的**插件页**点「添加插件」，填包名 `dsh-mac-computer-use`，然后**重启 DSH**。这是 npm 包：按包名装时，DSH 连不上 npm 官方源会自动改用国内镜像（npmmirror），不经过 GitHub。也可以填发布包地址 `https://github.com/OrderG-X/dsh-mac-computer-use/releases/latest/download/dsh-mac-computer-use.tgz`，那样要能连上 GitHub。
+On the DSH **Plugins** page, click **Add plugin**, enter the package name `dsh-mac-computer-use`, then **restart DSH**. This is an npm package: when installed by name, DSH automatically switches to a China mirror (npmmirror) if the official npm registry is unreachable — nothing goes through GitHub. You can also enter the release bundle URL `https://github.com/OrderG-X/dsh-mac-computer-use/releases/latest/download/dsh-mac-computer-use.tgz`, which does require access to GitHub.
 
-**更新**：DSH 0.2.2 起，在「插件」页点开它，点「更新到 …」；更老的 DSH 先卸载，再按上面添加一次。新版发布后大约一天才装得到（DSH 装插件用的 pnpm 默认不装刚发布的版本）；急的话卸载后填发布包地址，不过这样装的以后不能点更新。
+**Updating:** on DSH 0.2.2 and newer, open the plugin on the **Plugins** page and click **Update to …**; on older DSH versions, uninstall first, then add it again as above. A new release only becomes installable about a day after it is published (pnpm, which DSH uses to install plugins, refuses brand-new versions by default). In a hurry? Uninstall and install from the release bundle URL instead — though an install done that way cannot be updated with one click later.
 
-安装包里自带编好的命令行引擎和光标浮层（Apple 芯片和 Intel 都能用，macOS 11 起），**不用 clone 仓库、不用装 Xcode**。第一次用要在系统设置里给 DeepSeek Harness 开**屏幕录制**和**辅助功能**权限，设置页里有按钮直达。
+The package bundles a prebuilt command-line engine and cursor overlay (Apple silicon and Intel, macOS 11+), so there is **no need to clone the repo or install Xcode**. On first use, grant DeepSeek Harness **Screen Recording** and **Accessibility** permissions in System Settings — the plugin's settings page has buttons that take you straight there.
 
-装好后插件页里叫「**Mac 桌面操作**」。点进去是设置页：能不能用、看得到几个窗口，命令行引擎、屏幕录制权限、辅助功能权限、光标浮层逐项打勾，缺哪个就给哪个的按钮（打开系统设置）；还有「屏幕上显示操作光标」开关。
+Once installed, it shows up on the Plugins page as **Mac Desktop Control**. Opening it reveals a settings page: whether the plugin works and how many windows it can see, with a checklist covering the command-line engine, Screen Recording permission, Accessibility permission and the cursor overlay — anything missing gets its own button (which opens System Settings), plus a toggle for showing the action cursor on screen.
 
-**自己从源码编译**（改了 Swift 代码时才需要）：
+**Build from source yourself** (only needed if you change the Swift code):
 
 ```bash
 git clone https://github.com/OrderG-X/dsh-mac-computer-use.git
@@ -76,117 +71,117 @@ cd dsh-mac-computer-use
 ./install.sh
 ```
 
-需要 Xcode Command Line Tools（`xcode-select --install`），装到 `~/.dsh/bin/`。插件优先用自带的程序，要用自己编的，设环境变量 `DSH_CU_BIN=~/.dsh/bin/dsh-cu`（光标浮层是 `DSH_CU_OVERLAY`）。发版时的编译脚本是 `tools/build-bin.mjs`。
+Requires Xcode Command Line Tools (`xcode-select --install`); the binaries are installed into `~/.dsh/bin/`. The plugin prefers the binaries bundled with the package; to use your own build instead, set `DSH_CU_BIN=~/.dsh/bin/dsh-cu` (and `DSH_CU_OVERLAY` for the cursor overlay). The release build script lives at `tools/build-bin.mjs`.
 
 ---
 
-## 用起来是什么样
+## What it looks like in practice
 
 ```
-你：帮我看看屏幕上有什么
-→ desktop_windows      拿到窗口列表和坐标
-→ desktop_screenshot   模型看到图
+You: Show me what's on my screen
+→ desktop_windows      returns the window list and coordinates
+→ desktop_screenshot   the model sees the image
 
-你：点那个「登录」按钮
-→ desktop_click(text="登录")   OCR 找到它 → 发事件过去（不动你的鼠标）
-                              回报「之后：新开了窗口「欢迎」」
+You: Click that "Sign in" button
+→ desktop_click(text="Sign in")  OCR locates it → the event is delivered over (your real mouse never moves)
+                                 reports back "afterwards: a new 'Welcome' window opened"
 
-你：把计算器的 7+8 算一下
-→ desktop_observe      截图 + 元素编号
-→ desktop_click(index=5) 点第 5 个（"7"）
-→ desktop_screenshot   再截一次确认
+You: Work out 7+8 in Calculator
+→ desktop_observe      screenshot + numbered elements
+→ desktop_click(index=5) clicks element 5 ("7")
+→ desktop_screenshot   one more screenshot to confirm
 ```
 
-**推荐工作流是 `observe → click(index)`** —— 模型看图上的编号，比算坐标可靠得多。
+**The recommended workflow is `observe → click(index)`** — the model reads numbers straight off the image, far more reliable than estimating pixel coordinates.
 
 ---
 
-## 底层
+## Under the hood
 
 ```
-DSH 工具 (desktop_*)
+DSH tools (desktop_*)
       ↓ spawn
-dsh-cu (Swift 单文件)
-      ├── winlist   CGWindowListCopyWindowInfo   ← 窗口坐标，零权限
-      ├── observe   AX 枚举可点元素 + 截图标注编号
-      ├── shot      screencapture -l 窗口号       ← 截窗口本身，被挡住也行
-      ├── find      Vision 框架 OCR              ← 找文字 → 可点坐标
-      ├── clickat   CGEvent postToPid            ← 不移动真实鼠标、不抢前台
-      ├── type/key  CGEvent                      ← 支持中文
+dsh-cu (single-file Swift)
+      ├── winlist   CGWindowListCopyWindowInfo   ← window coordinates, zero permissions
+      ├── observe   AX enumeration of clickable elements + numbered screenshot
+      ├── shot      screencapture -l <window id>  ← captures the window itself, even when occluded
+      ├── find      Vision framework OCR          ← finds text → clickable coordinates
+      ├── clickat   CGEvent postToPid             ← never moves the real mouse, never steals focus
+      ├── type/key  CGEvent                       ← CJK input supported
       ├── scroll/drag  CGEvent
-      └── launch    NSWorkspace（后台启动，不抢前台）
+      └── launch    NSWorkspace (background launch, no focus steal)
 ```
 
-后台点击能落进窗口，靠的是两处细节：鼠标事件里填上目标窗口号和窗口内坐标（不填的话 AppKit 和 Electron 都会把事件丢掉）；目标是后台的 Chromium / Electron 窗口（比如 DSH 自己）时，按下那一下带上 ⌘，页面才肯接，松开和 click 本身不带，页面看到的就是普通点击。
+Background clicks actually land in their target window thanks to two details: the mouse event carries the target window id and window-relative coordinates (leave them out and both AppKit and Electron silently drop the event); and when the target is a backgrounded Chromium/Electron window (DSH itself, for example), the mouse-down must carry ⌘ before the page will accept it — the mouse-up and the click event itself carry no modifiers, so what the page sees is an ordinary click.
 
-截某个应用的窗口时，按窗口号截它本身（`screencapture -l`）：被别的窗口挡住、在后台都截得到，看到的就是要点的那个窗口；截不到再退回按屏幕区域截。截图、给元素编号、按文字找都是这样（感谢 [@Golden-Pigeon](https://github.com/Golden-Pigeon) 的 PR）。
+When capturing an application window, the tool captures that window itself by id (`screencapture -l`): it works even when the window is behind other windows or in the background, and what you see is exactly the window you are about to click; only if that fails does it fall back to capturing a screen region. Screenshots, element numbering and find-by-text all behave this way (thanks to [@Golden-Pigeon](https://github.com/Golden-Pigeon) for the PR).
 
-后台打字同理：先用辅助功能把目标窗口设成它自己的主窗口（不激活应用、不抢前台），按键才有去处；Chromium / Electron 在后台一个按键只收一个字，所以对它们逐字发。后台应用收不到全选、复制、粘贴这类走菜单的 ⌘ 快捷键。
+Background typing works the same way: Accessibility first sets the target window as its own application's main window (without activating the app or stealing focus) so keystrokes have somewhere to land; Chromium/Electron accept only one character per keystroke while in the background, so text is delivered to them character by character. Background apps never receive menu-driven ⌘ shortcuts such as select-all, copy or paste.
 
-命令行也能单独用：
+The command line works on its own too:
 
 ```bash
-dsh-cu winlist                    # 列窗口
-dsh-cu tree <pid>                 # AX 树（解锁状态下可用）
-dsh-cu observe <pid>              # 截图 + 编号
-dsh-cu find "登录"                 # OCR 找文字 → 坐标
-dsh-cu clickat <pid> <x> <y>      # 点（默认不动真实鼠标）
-dsh-cu type <pid> "你好"           # 输入
-dsh-cu selftest                   # 全链路自检（见 tools/selftest.sh）
+dsh-cu winlist                    # list windows
+dsh-cu tree <pid>                 # AX tree (available while unlocked)
+dsh-cu observe <pid>              # screenshot + numbered elements
+dsh-cu find "Sign in"             # OCR text → coordinates
+dsh-cu clickat <pid> <x> <y>      # click (real mouse untouched by default)
+dsh-cu type <pid> "hello"         # type text
+dsh-cu selftest                   # full end-to-end self-test (see tools/selftest.sh)
 ```
 
 ---
 
-## 光标
+## The cursor
 
-`cursor/cursor-overlay.swift` 是桌面光标浮层（装到 `~/.dsh/bin/dsh-cursor-overlay`）：NSPanel，不抢前台、点击穿透、永远置顶，闲 60 秒自己退出。
+`cursor/cursor-overlay.swift` is the desktop cursor overlay (installed to `~/.dsh/bin/dsh-cursor-overlay`): an NSPanel that never takes focus, lets clicks pass through, stays on top forever, and exits by itself after 60 idle seconds.
 
-跟 [dsh-chrome-bridge](https://github.com/OrderG-X/dsh-chrome-bridge) 的浏览器光标是**一套样式**，一眼分得清是在哪边干活：
+It shares **one visual family** with the browser cursor in [dsh-chrome-bridge](https://github.com/OrderG-X/dsh-chrome-bridge), so you can tell at a glance which surface is being driven:
 
-| | 桌面（这个仓库） | 浏览器（dsh-chrome-bridge） |
+| | Desktop (this repo) | Browser (dsh-chrome-bridge) |
 |---|---|---|
-| 箭头 | 同一个形状，实心蓝 | 同一个形状，半透明淡蓝 |
-| 名牌 | 显示器图标 + DSH | 地球图标 + DSH |
-| 干活时 | 名牌展开成「DSH · 点击 发送」 | 名牌展开成「DSH · 点击 登录」 |
+| Arrow | Same shape, solid blue | Same shape, translucent light blue |
+| Name tag | Display icon + DSH | Globe icon + DSH |
+| While working | Tag expands to "DSH · Click · Send" | Tag expands to "DSH · Click · Sign in" |
 
-**动效**走克制路线，两边一样：
+**Motion** stays restrained, identically on both sides:
 
-- 同一个弹簧、同一套算法：沿轻微的弧线滑过去，顺着速度方向轻轻拉长（最多 7%）、略侧倾，名牌晚半拍跟上；到了冲过头最多两三像素再落回
-- 点击时以箭头尖端为支点缩一下再弹回（瞄准点纹丝不动），一圈淡波纹
-- 拖拽时按住（缩一点 + 尖端一圈光晕）跟着走；滚动时右上角亮一下方向
-- 闲 6 秒变淡、名牌收起，不挡视线；系统开了「减少动态效果」就不做动画
+- One spring, one algorithm: it glides along a slightly curved path, stretches gently in its direction of travel (by at most 7%), tilts a touch, with the name tag trailing half a beat behind; on arrival it overshoots by at most two or three pixels before settling back
+- On click it shrinks around the arrow tip and springs back (the aim point never moves), leaving a faint ripple ring
+- While dragging it stays pressed (slightly shrunk, with a glow ring at the tip) and follows along; scrolling flashes the direction at the top right
+- After 6 idle seconds it fades and retracts its name tag, staying out of the way; with the system's "Reduce motion" setting enabled, there is no animation at all
 
-浮层指令（往 `$(getconf DARWIN_USER_TEMP_DIR)dsh-cursor.fifo` 写一行，每个账号各自一个）：`show x y` / `move x y` / `click [n]` / `down` / `up` / `scroll ±1` / `label 文字` / `hide` / `ping`。
+Overlay commands (write one line to `$(getconf DARWIN_USER_TEMP_DIR)dsh-cursor.fifo`, one FIFO per user account): `show x y` / `move x y` / `click [n]` / `down` / `up` / `scroll ±1` / `label <text>` / `hide` / `ping`.
 
 ---
 
-## 已知限制
+## Known limitations
 
-- **锁屏时**：截图只有壁纸、窗口不渲染、AX 读不到窗口 —— 这是 macOS 的行为，不是工具的问题
-- **最小化的窗口、在别的桌面空间（Space）里的窗口**：看不到也操作不了，先把它放回当前桌面
-- `desktop_click` 默认投递给目标进程（`postToPid`）。个别应用不响应投递事件，加 `global: true` 走系统事件兜底（会移动真实鼠标）
-- **桌面点击驱动不了 Chrome** —— Chrome 不理会投递的合成事件。操作浏览器请用 CDP 类工具（比如 [dsh-chrome-bridge](https://github.com/OrderG-X/dsh-chrome-bridge)）
-- 需要**屏幕录制**权限（`screencapture` 用）和**辅助功能**权限（点击、输入、按键、滚动、拖拽用；没开时系统会静默丢掉这些事件，所以工具会直接报错，不会假装成功）
+- **While the screen is locked:** screenshots show only the wallpaper, windows stop rendering, and AX reads no windows — that is macOS behavior, not a tool bug
+- **Minimized windows and windows on other Spaces:** invisible and untouchable; bring the window back to the current Space first
+- `desktop_click` delivers events to the target process by default (`postToPid`). A few apps ignore delivered events; add `global: true` to fall back to system-level events (which do move the real mouse)
+- **Desktop clicks cannot drive Chrome** — Chrome ignores delivered synthetic events. Drive the browser with a CDP-style tool instead (such as [dsh-chrome-bridge](https://github.com/OrderG-X/dsh-chrome-bridge))
+- Requires **Screen Recording** permission (used by `screencapture`) and **Accessibility** permission (used by click, type, keys, scroll and drag; while it is off, macOS silently drops those events, so the tools fail loudly instead of pretending to succeed)
 
 ---
 
 ## Field notes
 
-[docs/locked-session-and-ax.md](docs/locked-session-and-ax.md) —— 锁屏会让 AX 全废这件事，
-以及为什么它看起来跟驱动 bug 一模一样。这个坑花了一整天才确认。
+[docs/locked-session-and-ax.md](docs/locked-session-and-ax.md) — how a locked screen disables AX across the board,
+why that looks exactly like a driver bug, and the full day it took to confirm.
 
 ---
 
-## 反馈
+## Feedback
 
-遇到问题或想要新功能，[提一个 issue](https://github.com/OrderG-X/dsh-mac-computer-use/issues/new/choose)。报问题时写上 DSH 版本和插件版本，修起来最快。
+Found a problem or want a new feature? [Open an issue](https://github.com/OrderG-X/dsh-mac-computer-use/issues/new/choose). Including your DSH version and plugin version makes fixes land fastest.
 
 ## License
 
-MIT。`tools/dsh-cu.swift` 是自包含单文件，想改直接改。
+MIT. `tools/dsh-cu.swift` is a self-contained single file — modify it directly if you like.
 
 ---
 
-## 关于光标形状
+## About the cursor shape
 
-光标是**代码画的**（`cursor/cursor-overlay.swift` 里的 `arrowPath`），圆角经典箭头 + 蓝色渐变，跟浏览器那边用同一条路径 —— 不包含任何第三方素材文件。
+The cursor is **drawn in code** (the `arrowPath` in `cursor/cursor-overlay.swift`): a rounded classic arrow with a blue gradient, sharing the exact same path as the browser side — no third-party asset files involved.

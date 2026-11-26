@@ -1,40 +1,40 @@
-// dsh-cu —— 最小可用的 macOS computer use 命令行
+// dsh-cu — a minimal macOS computer use command line
 //
-// 为什么有这个东西：cua-driver（dsh-computer-use 插件依赖的原生驱动）在 macOS 26 上
-// 有个未修的上游 bug —— 它的 daemon 走 AX 时永远返回 0 个 AXWindow
-// （trycua/cua#4039，环境与我们完全一致）。但同一台机器上，**由 DSH 派生的进程**
-// 走 AX 完全正常（本文件就是证明）。所以这里直接用系统 AX API 实现一份。
+// Why this exists: cua-driver (the native driver the dsh-computer-use plugin depends on) has an
+// unfixed upstream bug on macOS 26 — its daemon always gets 0 AXWindows over AX
+// (trycua/cua#4039; environment identical to ours). Yet on the same machine, **processes spawned by DSH**
+// work over AX perfectly fine (this file is the proof). So this reimplements it directly on the system AX API.
 //
-// 设计要点（**视觉优先**，因为这台机器上第三方二进制的 AX 是坏的）：
-//   * 找窗口：CGWindowListCopyWindowInfo —— 不需要任何权限，拿到 pid + 精确 bounds
-//   * 看：screencapture 截图（DSH 已有屏幕录制权限）
-//   * 点：CGEvent 用 postToPid 投递给目标进程 —— **不移动真实鼠标、不抢前台**
-//   * 打：CGEvent + keyboardSetUnicodeString，同样投递给目标进程（支持中文）
-//   * AX 命令保留，但在本机不可靠（kAXWindowsAttribute 返回的元素角色是 AXApplication，
-//     永远拿不到 AXWindow；同环境下 AppleScript 反而正常，说明是第三方二进制的 AX 被限制）
+// Design principles (**vision-first**, because third-party binaries' AX is broken on this machine):
+//   * Find windows: CGWindowListCopyWindowInfo — needs no permissions, gives pid + exact bounds
+//   * See: screencapture screenshots (DSH already holds Screen Recording permission)
+//   * Click: CGEvent delivered to the target process via postToPid — **doesn't move the real mouse, doesn't steal focus**
+//   * Type: CGEvent + keyboardSetUnicodeString, likewise delivered to the target process (supports Chinese)
+//   * AX commands are kept, but unreliable on this machine (elements under kAXWindowsAttribute report role AXApplication,
+//     so AXWindow is never reachable; AppleScript works fine in the same environment, meaning third-party binaries' AX is restricted)
 //
-// 用法：
-//   dsh-cu windows                     列出有窗口的应用
-//   dsh-cu tree <pid> [--limit N]      打印 AX 树（带 [i] 索引）
-//   dsh-cu click <pid> <i>             点第 i 个元素（AXPress，最稳）
-//   dsh-cu clickat <pid> <x> <y> [--global] [--no-cursor]  按屏幕坐标点（默认不动真实鼠标；会联动浮层光标）
-//   dsh-cu type <pid> <文字>           往目标进程打字（支持中文）
-//   dsh-cu key <pid> <keycode> [flags] 按键（flags: cmd/shift/alt/ctrl，可组合）
-//   dsh-cu find <文字> [--pid N]       OCR 找屏幕上的文字 → 输出可点的坐标（没给 pid 就找所有显示器）
-//   dsh-cu observe <pid> [--out 路径] [--limit N]  **set-of-mark**：截图上给可点元素编号
-//   dsh-cu click-index <pid> <编号> [--no-cursor]  点编号对应的元素（会联动浮层光标）
-//   dsh-cu scroll-lines <pid> <x> <y> <dy> [dx] [--no-cursor]   滚轮，单位「行」，dy 正=向下、dx 正=向右（会联动浮层光标；
-//                                      旧名 scroll 仍可用。插件用新名字，旧引擎不认就直接失败，不会按像素反着滚）
-//   dsh-cu drag <pid> <x1> <y1> <x2> <y2> [--no-cursor]   拖拽（会联动浮层光标）
-//   dsh-cu apps                             列出运行中的应用（* = 前台）
-//   dsh-cu launch <bundleId|应用名>          后台启动应用（不抢前台；应用名可以是本地化名，如「计算器」）
-//   dsh-cu shot [--out 路径] [--rect x,y,w,h | --pid N | --window 窗口号]  截屏（默认主屏）。按「点」出图：
-//                                      图上 (u,v) = 屏幕 (rect.x+u, rect.y+v)，第二行输出 rect。
-//                                      --pid / --window 按窗口号截窗口本身（被别的窗口挡住也行），截不到再按屏幕区域截
-//   dsh-cu version                     协议版本号（插件先核对它，对不上就要重跑 install.sh）
-//   dsh-cu features                    协议号不变的增强（一行一个）。插件据此提示「引擎可以更新」，不拦着用
+// Usage:
+//   dsh-cu windows                     List apps that have windows
+//   dsh-cu tree <pid> [--limit N]      Print the AX tree (with [i] indices)
+//   dsh-cu click <pid> <i>             Click the i-th element (AXPress, most reliable)
+//   dsh-cu clickat <pid> <x> <y> [--global] [--no-cursor]  Click at screen coordinates (real mouse untouched by default; syncs the overlay cursor)
+//   dsh-cu type <pid> <text>           Type text into the target process (supports Chinese)
+//   dsh-cu key <pid> <keycode> [flags] Press a key (flags: cmd/shift/alt/ctrl, combinable)
+//   dsh-cu find <text> [--pid N]       OCR-find on-screen text → prints clickable coordinates (all displays when pid is omitted)
+//   dsh-cu observe <pid> [--out path] [--limit N]  **set-of-mark**: numbers the clickable elements on a screenshot
+//   dsh-cu click-index <pid> <number> [--no-cursor]  Clicks the element with that number (syncs the overlay cursor)
+//   dsh-cu scroll-lines <pid> <x> <y> <dy> [dx] [--no-cursor]   Scroll wheel, unit "rows": dy positive = down, dx positive = right (syncs the overlay cursor;
+//                                      old name scroll still works. The plugin uses the new name — an old engine that doesn't recognize it fails outright instead of scrolling by pixels in the opposite direction)
+//   dsh-cu drag <pid> <x1> <y1> <x2> <y2> [--no-cursor]   Drag (syncs the overlay cursor)
+//   dsh-cu apps                             List running apps (* = foreground)
+//   dsh-cu launch <bundleId|app name>          Launch an app in the background (doesn't steal focus; the app name can be a localized name, e.g. Calculator)
+//   dsh-cu shot [--out path] [--rect x,y,w,h | --pid N | --window window-number]  Screenshot (main display by default). Image comes out in "points":
+//                                      image (u,v) = screen (rect.x+u, rect.y+v); the rect is printed on the second output line.
+//                                      --pid / --window capture the window itself by window number (works even when covered by other windows), falling back to a screen-area capture if that fails
+//   dsh-cu version                     Protocol version (the plugin checks it first; on mismatch, rerun install.sh)
+//   dsh-cu features                    Additions that keep the protocol version (one per line). The plugin uses this to hint "the engine can be updated" without blocking use
 //
-// 点击 / 输入 / 按键 / 滚动 / 拖拽 / observe 要辅助功能权限（没有它系统会静默丢掉合成事件），没有就直接报错。
+// Click / type / key / scroll / drag / observe need Accessibility permission (without it the system silently drops synthetic events); missing permission fails right away.
 
 import ApplicationServices
 import AppKit
@@ -42,7 +42,7 @@ import Foundation
 import ImageIO
 import Vision
 
-// ── 工具函数 ────────────────────────────────────────────────────────────────
+// ── Utility functions ────────────────────────────────────────────────────────────────
 
 func fail(_ msg: String) -> Never {
     FileHandle.standardError.write((msg + "\n").data(using: .utf8)!)
@@ -73,7 +73,7 @@ func frame(_ el: AXUIElement) -> CGRect? {
     return CGRect(origin: p, size: s)
 }
 
-/// 元素在树里的可读标签：优先 title / description / value
+/// Readable label for an element in the tree: prefers title / description / value
 func label(_ el: AXUIElement) -> String {
     for k in [kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute, kAXRoleDescriptionAttribute] {
         if let v = str(el, k as String), !v.isEmpty { return v }
@@ -93,27 +93,27 @@ func appsWithWindows() -> [(pid_t, String, Int)] {
         }
 }
 
-/// 目标进程还在不在（kill 0 只探测、不发信号；EPERM = 在，只是不归我们管）。
-/// 进程没了还往它投事件，系统不报错，工具就会谎报成功
+/// Whether the target process is still alive (kill 0 only probes, sends no signal; EPERM = alive, just not owned by us).
+/// Posting events to a dead process doesn't error, so the tool would falsely report success
 func requireAlive(_ pid: pid_t) {
     guard pid > 0, kill(pid, 0) == 0 || errno == EPERM else {
-        fail("进程 \(pid) 已经不在了（应用退出了？）。用 desktop_apps / desktop_windows 重新拿 pid")
+        fail("Process \(pid) is gone (did the app quit?). Use desktop_apps / desktop_windows to get a fresh pid")
     }
 }
 
-/// 没有辅助功能权限时，系统会把投递的点击 / 键盘 / 滚轮事件静默丢掉，AX 也读不到元素 —— 直接报错，别谎报成功
+/// Without Accessibility permission the system silently drops posted click / keyboard / scroll events and AX reads no elements — fail outright instead of falsely reporting success
 func requireAX() {
     guard AXIsProcessTrusted() else {
-        fail("没有辅助功能权限：点击、输入、按键、滚动会被系统直接丢掉。去「系统设置 → 隐私与安全性 → 辅助功能」打开 DeepSeek Harness 的开关，再重试")
+        fail("No Accessibility permission: clicks, typing, key presses and scrolling will be dropped outright by the system. Enable the DeepSeek Harness toggle under System Settings → Privacy & Security → Accessibility, then retry")
     }
 }
 
-/// 跟插件约定的协议版本（plugin/index.js 的 ENGINE_PROTOCOL）。参数或输出格式变了就两边一起加 1：
-/// 插件跟着 DSH 自动更新，引擎得手动重跑 install.sh，对不上时插件靠它拦住、不往下跑
+/// Protocol version agreed with the plugin (ENGINE_PROTOCOL in plugin/index.js). When arguments or output format change, bump both sides by 1 together:
+/// the plugin auto-updates with DSH while the engine needs a manual install.sh rerun; on mismatch the plugin uses this to stop rather than continue
 let ENGINE_PROTOCOL = 2
 
-/// 光标浮层的 FIFO：本用户私有临时目录（DARWIN_USER_TEMP_DIR，0700）下，别的账号占不了也读不到。
-/// 插件（getconf DARWIN_USER_TEMP_DIR）和浮层用同一个算法
+/// FIFO for the cursor overlay: under the user's private temp dir (DARWIN_USER_TEMP_DIR, 0700) where other accounts can't grab it or read it.
+/// The plugin (getconf DARWIN_USER_TEMP_DIR) and the overlay use the same algorithm
 func cursorFifoPath() -> String {
     var buf = [CChar](repeating: 0, count: Int(PATH_MAX))
     let dir = confstr(_CS_DARWIN_USER_TEMP_DIR, &buf, buf.count) > 0 ? String(cString: buf) : NSTemporaryDirectory()
@@ -121,7 +121,7 @@ func cursorFifoPath() -> String {
 }
 let cursorFifo = cursorFifoPath()
 
-/// 截图中间文件放这里：用户自己的临时目录（NSTemporaryDirectory）下的 0700 子目录，进程退出时整个删掉
+/// Screenshot scratch files live here: a 0700 subdir of the user's own temp dir (NSTemporaryDirectory), removed wholesale when the process exits
 var scratchDir: String?
 
 func privateTemp(_ name: String) -> String {
@@ -129,14 +129,14 @@ func privateTemp(_ name: String) -> String {
         let d = (NSTemporaryDirectory() as NSString).appendingPathComponent("dsh-cu-\(getpid())-\(UUID().uuidString.prefix(8))")
         do {
             try FileManager.default.createDirectory(atPath: d, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        } catch { fail("建不了临时目录 \(d)：\(error.localizedDescription)") }
+        } catch { fail("Can't create temp directory \(d): \(error.localizedDescription)") }
         scratchDir = d
         atexit { if let d = scratchDir { try? FileManager.default.removeItem(atPath: d) } }
     }
     return (scratchDir! as NSString).appendingPathComponent(name)
 }
 
-/// observe 编号和 click-index 点击共用的可点元素枚举：同一套规则、同一个顺序，编号才对得上
+/// Clickable-element enumeration shared by observe numbering and click-index: same rules, same order, so the numbers line up
 let INTERACTIVE: Set<String> = ["AXButton", "AXTextField", "AXTextArea", "AXLink", "AXCheckBox",
                                 "AXRadioButton", "AXPopUpButton", "AXMenuItem", "AXTab", "AXSlider",
                                 "AXSearchField", "AXComboBox", "AXDisclosureTriangle", "AXIncrementor"]
@@ -159,21 +159,21 @@ func interactiveElements(in win: AXUIElement, limit: Int) -> [(role: String, lab
     return marks
 }
 
-// ── 子命令 ──────────────────────────────────────────────────────────────────
+// ── Subcommands ──────────────────────────────────────────────────────────────────
 
 let args = Array(CommandLine.arguments.dropFirst())
-guard let cmd = args.first else { fail("用法见文件头注释") }
+guard let cmd = args.first else { fail("Usage: see the header comment at the top of this file") }
 
-/// 按参数名取值（--out 路径、--limit N …）。不能拿「最后一个参数」当值：后面再追加 --no-cursor 之类就全乱了
+/// Look up a value by flag name (--out path, --limit N …). Can't take "the last argument" as the value: appending --no-cursor or the like afterwards would break everything
 func argValue(_ name: String) -> String? {
     guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
     return args[i + 1]
 }
 
-/// --limit 只收正整数；没给用默认值
+/// --limit accepts positive integers only; falls back to the default when omitted
 func limitArg(_ def: Int) -> Int {
     guard let v = argValue("--limit") else { return def }
-    guard let n = Int(v), n > 0 else { fail("--limit 要是正整数，收到的是「\(v)」") }
+    guard let n = Int(v), n > 0 else { fail("--limit must be a positive integer, got \"\(v)\"") }
     return n
 }
 
@@ -183,15 +183,15 @@ case "version":
     print(ENGINE_PROTOCOL)
 
 case "features":
-    // window-shot：observe / find --pid / shot --pid 按窗口号截窗口本身
+    // window-shot: observe / find --pid / shot --pid capture the window itself by window number
     print("window-shot")
 
 case "winlist":
-    // CGWindowList：不依赖 AX，拿得到 pid / 标题 / 精确 bounds / 层级
+    // CGWindowList: doesn't rely on AX; yields pid / title / exact bounds / layer
     let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
     for w in info {
         let layer = w[kCGWindowLayer as String] as? Int ?? -1
-        guard layer == 0 else { continue }                      // 只看普通窗口
+        guard layer == 0 else { continue }                      // ordinary windows only
         let pid = w[kCGWindowOwnerPID as String] as? Int ?? 0
         let name = w[kCGWindowOwnerName as String] as? String ?? "?"
         let title = w[kCGWindowName as String] as? String ?? ""
@@ -213,7 +213,7 @@ case "windows":
     }
 
 case "tree":
-    guard args.count >= 2, let pid = pid_t(args[1]) else { fail("用法: dsh-cu tree <pid>") }
+    guard args.count >= 2, let pid = pid_t(args[1]) else { fail("Usage: dsh-cu tree <pid>") }
     let limit = limitArg(200)
     var index = 0
     var seen = Set<CFHashCode>()
@@ -221,7 +221,7 @@ case "tree":
     func walk(_ el: AXUIElement, _ depth: Int) {
         guard index < limit, depth <= 20 else { return }
         let h = CFHash(el)
-        if seen.contains(h) { return }          // 环检测：AX 树里有自引用
+        if seen.contains(h) { return }          // cycle detection: the AX tree contains self-references
         seen.insert(h)
         let role = str(el, kAXRoleAttribute as String) ?? "?"
         let lab = label(el)
@@ -232,11 +232,11 @@ case "tree":
         index += 1
         for c in children(el) { walk(c, depth + 1) }
     }
-    // 从窗口开始 —— 从 application 走会先撞上菜单栏和自引用
+    // Start from windows — walking from the application hits the menu bar and self-references first
     for w in (attr(ax, kAXWindowsAttribute as String) as? [AXUIElement]) ?? [] { walk(w, 0) }
 
 case "click":
-    guard args.count >= 3, let pid = pid_t(args[1]), let want = Int(args[2]) else { fail("用法: dsh-cu click <pid> <索引>") }
+    guard args.count >= 3, let pid = pid_t(args[1]), let want = Int(args[2]) else { fail("Usage: dsh-cu click <pid> <index>") }
     requireAlive(pid)
     requireAX()
     let ax = AXUIElementCreateApplication(pid)
@@ -253,49 +253,49 @@ case "click":
         for c in children(el) { find(c, depth + 1) }
     }
     for w in (attr(ax, kAXWindowsAttribute as String) as? [AXUIElement]) ?? [] { find(w, 0) }
-    guard let el = target else { fail("没有第 \(want) 个元素") }
+    guard let el = target else { fail("No element #\(want)") }
     var err = AXUIElementPerformAction(el, kAXPressAction as CFString)
     if err != .success {
-        // 没有 AXPress 就退回坐标点击
-        guard let f = frame(el) else { fail("元素既不能按也没有坐标") }
+        // fall back to a coordinate click when there's no AXPress
+        guard let f = frame(el) else { fail("Element can't be pressed and has no coordinates") }
         err = postClick(pid: pid, at: CGPoint(x: f.midX, y: f.midY)) ? .success : .failure
     }
-    guard err == .success else { fail("点击失败 (\(err.rawValue))") }
-    print("已点击 [\(want)] \(label(el).prefix(40))")
+    guard err == .success else { fail("Click failed (\(err.rawValue))") }
+    print("Clicked [\(want)] \(label(el).prefix(40))")
 
 case "clickat":
     guard args.count >= 4, let pid = pid_t(args[1]), let x = Double(args[2]), let y = Double(args[3]) else {
-        fail("用法: dsh-cu clickat <pid> <x> <y> [--global]")
+        fail("Usage: dsh-cu clickat <pid> <x> <y> [--global]")
     }
     requireAlive(pid)
     requireAX()
     let global = args.contains("--global")
     cursorOverlayOff = args.contains("--no-cursor")
     if !cursorOverlayOff { ensureOverlay() }
-    // 光标自己滑过去（弹簧 + 沿运动方向拉伸 + 点击回弹），这就是 Codex 光标的全部特效。
-    // 压暗/旋转球是 Codex 别处的东西，不是光标，所以默认不出；要就设 DSH_CU_FX=full
+    // The cursor glides over on its own (spring + stretch along the direction of motion + click recoil) — that's the whole set of Codex cursor effects.
+    // The dimming / spinning orb are other Codex features, not the cursor, so they're off by default; set DSH_CU_FX=full to get them
     let fx = ProcessInfo.processInfo.environment["DSH_CU_FX"] ?? ""
     overlayPing("move \(Int(x)) \(Int(y))")
     if fx == "full" {
         overlayPing("fog on")
         overlayPing("lens \(Int(x)) \(Int(y))")
     }
-    usleep(300_000)                                    // 等它滑到位再点
+    usleep(300_000)                                    // wait for it to glide into place, then click
     overlayPing("click")
-    guard postClick(pid: pid, at: CGPoint(x: x, y: y), global: global) else { fail("点击失败（造不出鼠标事件，或目标进程中途退出了）") }
-    print("已点击 (\(Int(x)), \(Int(y)))\(global ? " [真实鼠标]" : " [投递给 pid，不动鼠标]")")
+    guard postClick(pid: pid, at: CGPoint(x: x, y: y), global: global) else { fail("Click failed (couldn't create the mouse event, or the target process exited midway)") }
+    print("Clicked (\(Int(x)), \(Int(y)))\(global ? " [real mouse]" : " [delivered to pid, mouse untouched]")")
 
 case "type":
-    guard args.count >= 3, let pid = pid_t(args[1]) else { fail("用法: dsh-cu type <pid> <文字>") }
+    guard args.count >= 3, let pid = pid_t(args[1]) else { fail("Usage: dsh-cu type <pid> <text>") }
     requireAlive(pid)
     requireAX()
     let text = args.dropFirst(2).joined(separator: " ")
     makeMainWindow(pid: pid)
-    guard postText(pid: pid, text) else { fail("输入失败（造不出键盘事件，或目标进程中途退出了）") }
-    print("已输入 \(text.count) 个字符")
+    guard postText(pid: pid, text) else { fail("Typing failed (couldn't create the keyboard event, or the target process exited midway)") }
+    print("Typed \(text.count) characters")
 
 case "key":
-    guard args.count >= 3, let pid = pid_t(args[1]), let code = UInt16(args[2]) else { fail("用法: dsh-cu key <pid> <keycode> [cmd|shift|alt|ctrl]") }
+    guard args.count >= 3, let pid = pid_t(args[1]), let code = UInt16(args[2]) else { fail("Usage: dsh-cu key <pid> <keycode> [cmd|shift|alt|ctrl]") }
     requireAlive(pid)
     requireAX()
     var flags: CGEventFlags = []
@@ -311,39 +311,39 @@ case "key":
     makeMainWindow(pid: pid)
     let src = quietSource()
     for down in [true, false] {
-        guard let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down) else { fail("按键失败（造不出键盘事件）") }
+        guard let e = CGEvent(keyboardEventSource: src, virtualKey: code, keyDown: down) else { fail("Key press failed (couldn't create the keyboard event)") }
         e.flags = flags
         e.postToPid(pid)
-        usleep(20_000)                                 // 投递是异步的：发完立刻退出，松键偶尔会被丢掉
+        usleep(20_000)                                 // posting is async: exiting right after the send occasionally drops the key-up
     }
     if flags.contains(.maskCommand), NSRunningApplication(processIdentifier: pid)?.isActive == false {
-        // 后台应用收得到这一下（网页自己的快捷键能用），但全选 / 复制 / 粘贴这类走菜单的不执行。照实说，别谎报成功
-        print("已按键 \(code)（带 ⌘，目标在后台：全选、复制、粘贴这类系统快捷键多半没生效，请截图确认）")
+        // A background app does receive the press (the page's own shortcuts still work), but menu-driven ones like select-all / copy / paste won't run. Say so honestly instead of claiming success
+        print("Pressed key \(code) (with ⌘; target in background: system shortcuts like select-all/copy/paste may not take effect — verify with a screenshot)")
     } else {
-        print("已按键 \(code)")
+        print("Pressed key \(code)")
     }
 
 case "find":
-    // OCR 找文字 → 返回屏幕坐标。这是视觉路线真正好用的关键：
-    // agent 说「点『登录』」，而不是猜坐标。
-    guard args.count >= 2 else { fail("用法: dsh-cu find <文字> [--pid N] [--all]") }
+    // OCR-find text → return screen coordinates. This is what makes the vision route genuinely usable:
+    // the agent says "click the Sign in button" instead of guessing coordinates.
+    guard args.count >= 2 else { fail("Usage: dsh-cu find <text> [--pid N] [--all]") }
     let needle = args[1]
     let showAll = args.contains("--all")
-    // 每张图配上它覆盖的矩形：截屏模式是全局屏幕点（各屏自己的原点和缩放比已在 capture 里换算好），
-    // --file 模式是图片像素
+    // Each image is paired with the rect it covers: in screenshot mode those are global screen points (each display's own origin and scale already converted inside capture),
+    // in --file mode they are image pixels
     var shots: [(image: CGImage, covered: CGRect)] = []
     if let file = argValue("--file") {
-        // 直接对图片文件 OCR（不截屏）
+        // OCR the image file directly (no screenshot)
         guard let src = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
-              let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { fail("图片读不出来：\(file)") }
+              let cg = CGImageSourceCreateImageAtIndex(src, 0, nil) else { fail("Can't read image: \(file)") }
         shots = [(cg, CGRect(x: 0, y: 0, width: cg.width, height: cg.height))]
     } else if let p = argValue("--pid") {
-        guard let pid = pid_t(p) else { fail("--pid 要是数字") }
+        guard let pid = pid_t(p) else { fail("--pid must be a number") }
         guard let w = windowInfosOf(pid).first else { fail(noWindow(pid)) }
-        shots = [captureWindow(w)]              // 只截这个窗口（被挡住也是它自己）、只认窗口里的字
+        shots = [captureWindow(w)]              // capture just this window (it comes out even when covered) and only match text inside it
     } else {
-        shots = displays().map { capture($0) }          // 每块屏都找
-        if shots.isEmpty { fail("找不到显示器") }
+        shots = displays().map { capture($0) }          // search every display
+        if shots.isEmpty { fail("No display found") }
     }
 
     let want = needle.lowercased()
@@ -355,20 +355,20 @@ case "find":
         req.recognitionLanguages = ["zh-Hans", "en-US"]
         req.usesLanguageCorrection = true
         let handler = VNImageRequestHandler(cgImage: cg, options: [:])
-        do { try handler.perform([req]) } catch { fail("OCR 失败：\(error.localizedDescription)") }
+        do { try handler.perform([req]) } catch { fail("OCR failed: \(error.localizedDescription)") }
         seenText += (req.results ?? []).count
         for obs in (req.results ?? []) {
             guard let top = obs.topCandidates(1).first else { continue }
-            let matchAll = want.isEmpty || want == "*"      // Swift 的 contains("") 是 false，得单独处理
+            let matchAll = want.isEmpty || want == "*"      // Swift's contains("") is false, so handle it separately
             guard matchAll || top.string.lowercased().contains(want) else { continue }
-            let bb = obs.boundingBox                        // 归一化，左下原点
+            let bb = obs.boundingBox                        // normalized, bottom-left origin
             let sx = covered.minX + bb.midX * covered.width
-            let sy = covered.minY + (1 - bb.midY) * covered.height   // 换成左上原点
+            let sy = covered.minY + (1 - bb.midY) * covered.height   // converted to top-left origin
             hits.append((top.string, CGPoint(x: sx, y: sy), top.confidence))
         }
     }
     if hits.isEmpty {
-        print("没找到「\(needle)」（OCR 共识别 \(seenText) 段文字）")
+        print("Didn't find \"\(needle)\" (OCR recognized \(seenText) text segments)")
         exit(2)
     }
     hits.sort { $0.2 > $1.2 }
@@ -377,22 +377,22 @@ case "find":
     }
 
 case "observe":
-    // set-of-mark：把可点元素在截图上编号，模型就能说「点第 7 个」而不是猜坐标
-    guard args.count >= 2, let pid = pid_t(args[1]) else { fail("用法: dsh-cu observe <pid> [--out 路径] [--limit N]") }
+    // set-of-mark: number the clickable elements on the screenshot so the model can say "click #7" instead of guessing coordinates
+    guard args.count >= 2, let pid = pid_t(args[1]) else { fail("Usage: dsh-cu observe <pid> [--out path] [--limit N]") }
     let outPath = argValue("--out") ?? (NSTemporaryDirectory() as NSString).appendingPathComponent("dsh-cu-mark-\(pid).png")
     let maxMark = limitArg(60)
     requireAlive(pid)
     requireAX()
 
-    guard let win = windowsOfAX(pid).first else { fail("pid \(pid) 没有 AX 窗口（应用可能没在跑或没有窗口）") }
+    guard let win = windowsOfAX(pid).first else { fail("pid \(pid) has no AX windows (app may not be running or has no windows)") }
     let winFrame = frame(win) ?? .zero
-    guard winFrame.width > 1, winFrame.height > 1 else { fail("拿不到窗口尺寸") }
+    guard winFrame.width > 1, winFrame.height > 1 else { fail("Can't get the window size") }
 
     let marks = interactiveElements(in: win, limit: maxMark)
-    if marks.isEmpty { fail("这个窗口里没找到可交互元素") }
+    if marks.isEmpty { fail("No interactive elements found in this window") }
 
-    // 截窗口本身（被别的窗口挡住也行）：AX 窗口按位置大小对上 CGWindowList 里的窗口号；对不上就按屏幕区域截
-    // （按窗口所在那块屏的原点和缩放比裁，Retina / 副屏 / 负坐标都对）。出图按「点」尺寸
+    // Capture the window itself (works even when covered by other windows): match the AX window to a CGWindowList window number by position and size; fall back to a screen-area capture on mismatch
+    // (cropped using the origin and scale of the display the window is on — Retina / secondary displays / negative coordinates all handled). Image comes out at "point" size
     let near = { (a: CGFloat, b: CGFloat) in abs(a - b) < 2 }
     let cgWin = windowInfosOf(pid).first {
         near($0.rect.minX, winFrame.minX) && near($0.rect.minY, winFrame.minY) &&
@@ -403,7 +403,7 @@ case "observe":
     let scale = CGFloat(W) / covered.width
     guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: W, pixelsHigh: H, bitsPerSample: 8, samplesPerPixel: 4,
                                      hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
-          let gc = NSGraphicsContext(bitmapImageRep: rep) else { fail("标注图画不出来") }
+          let gc = NSGraphicsContext(bitmapImageRep: rep) else { fail("Can't draw the annotation image") }
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = gc
     let ctx = gc.cgContext
@@ -411,7 +411,7 @@ case "observe":
     ctx.draw(shot, in: CGRect(x: 0, y: 0, width: W, height: H))
     ctx.setLineWidth(2)
     for (i, m) in marks.enumerated() {
-        // 屏幕坐标 → 图片坐标（原点在左下，要翻转 y）
+        // screen coords → image coords (origin is bottom-left, so flip y)
         let x = (m.rect.minX - covered.minX) * scale
         let y = CGFloat(H) - (m.rect.maxY - covered.minY) * scale
         let w = m.rect.width * scale, hh = m.rect.height * scale
@@ -430,10 +430,10 @@ case "observe":
         ts.draw(at: NSPoint(x: bx + 3, y: by + 1))
     }
     NSGraphicsContext.restoreGraphicsState()
-    guard let png = rep.representation(using: .png, properties: [:]) else { fail("标注图写不出来") }
-    do { try png.write(to: URL(fileURLWithPath: outPath)) } catch { fail("标注图写不进 \(outPath)：\(error.localizedDescription)") }
+    guard let png = rep.representation(using: .png, properties: [:]) else { fail("Can't encode the annotation image") }
+    do { try png.write(to: URL(fileURLWithPath: outPath)) } catch { fail("Can't write the annotation image to \(outPath): \(error.localizedDescription)") }
 
-    // 观察时把光标滑到窗口中心，表示"我在看这个"
+    // While observing, glide the cursor to the window center to signal "I'm looking at this"
     if !args.contains("--no-cursor") {
         ensureOverlay()
         overlayPing("move \(Int(winFrame.midX)) \(Int(winFrame.midY))")
@@ -449,21 +449,21 @@ case "observe":
     }
 
 case "click-index":
-    guard args.count >= 3, let pid = pid_t(args[1]), let want = Int(args[2]) else { fail("用法: dsh-cu click-index <pid> <编号> [--no-cursor]") }
+    guard args.count >= 3, let pid = pid_t(args[1]), let want = Int(args[2]) else { fail("Usage: dsh-cu click-index <pid> <number> [--no-cursor]") }
     requireAlive(pid)
     requireAX()
-    guard let win = windowsOfAX(pid).first else { fail("没有 AX 窗口") }
-    guard want >= 1 else { fail("编号从 1 开始") }
-    // 跟 observe 同一套枚举、同一个顺序；数到第 want 个就停 —— observe 标多少个都对得上
+    guard let win = windowsOfAX(pid).first else { fail("No AX windows") }
+    guard want >= 1 else { fail("Numbering starts at 1") }
+    // Same enumeration and order as observe; stop once the want-th is counted — however many observe marked, the numbers line up
     let marks = interactiveElements(in: win, limit: want)
-    guard want <= marks.count else { fail("编号越界（1...\(marks.count)）") }
+    guard want <= marks.count else { fail("Number out of range (1...\(marks.count))") }
     let el = marks[want - 1].el
-    // 光标先滑到元素中心、名牌写上要点什么，再按（跟 clickat 一个节奏）
+    // Glide the cursor to the element's center with a nameplate naming what will be clicked, then press (same rhythm as clickat)
     cursorOverlayOff = args.contains("--no-cursor")
     if !cursorOverlayOff, let f = frame(el) {
         ensureOverlay()
         let name = label(el).replacingOccurrences(of: "\n", with: " ").trimmingCharacters(in: .whitespaces)
-        overlayPing(name.isEmpty ? "label 点击" : "label 点击 \(name.count > 14 ? String(name.prefix(13)) + "…" : name)")
+        overlayPing(name.isEmpty ? "label click" : "label click \(name.count > 14 ? String(name.prefix(13)) + "…" : name)")
         overlayPing("move \(Int(f.midX)) \(Int(f.midY))")
         usleep(300_000)
         overlayPing("click")
@@ -472,19 +472,19 @@ case "click-index":
     if err != .success, let f = frame(el) {
         err = postClick(pid: pid, at: CGPoint(x: f.midX, y: f.midY)) ? .success : .failure
     }
-    guard err == .success else { fail("点击失败 (\(err.rawValue))") }
-    print("已点击 [\(want)] \(label(el).prefix(40))")
+    guard err == .success else { fail("Click failed (\(err.rawValue))") }
+    print("Clicked [\(want)] \(label(el).prefix(40))")
 
 case "scroll", "scroll-lines":
     guard args.count >= 5, let pid = pid_t(args[1]), let x = Double(args[2]), let y = Double(args[3]), let rawDy = Int32(args[4]) else {
-        fail("用法: dsh-cu scroll <pid> <x> <y> <dy> [dx] [--no-cursor]")
+        fail("Usage: dsh-cu scroll <pid> <x> <y> <dy> [dx] [--no-cursor]")
     }
     requireAlive(pid)
     requireAX()
-    // 单位是「行」；约定 dy 正 = 向下滚、dx 正 = 向右。夹到 ±1000，后面取反不会溢出
+    // Unit is "rows"; convention: dy positive = scroll down, dx positive = right. Clamped to ±1000 so the negation below can't overflow
     let dy = max(-1000, min(1000, rawDy))
     let dx = max(-1000, min(1000, args.count >= 6 ? Int32(args[5]) ?? 0 : 0))
-    // 光标先滑到滚动的位置，右上角亮一下滚动方向
+    // Glide the cursor to the scroll position, then flash the scroll direction in the top-right corner
     cursorOverlayOff = args.contains("--no-cursor")
     if !cursorOverlayOff {
         ensureOverlay()
@@ -492,24 +492,24 @@ case "scroll", "scroll-lines":
         usleep(300_000)
         overlayPing("scroll \(dy < 0 ? -1 : 1)")
     }
-    // CGEvent 的滚轮值方向跟约定相反（wheel1 正 = 向上、wheel2 正 = 向左），所以取反
+    // CGEvent wheel values run opposite to the convention (wheel1 positive = up, wheel2 positive = left), hence the negation
     guard let e = CGEvent(scrollWheelEvent2Source: quietSource(),
-                          units: .line, wheelCount: 2, wheel1: -dy, wheel2: -dx, wheel3: 0) else { fail("造不出滚动事件") }
+                          units: .line, wheelCount: 2, wheel1: -dy, wheel2: -dx, wheel3: 0) else { fail("Can't create the scroll event") }
     e.location = CGPoint(x: x, y: y)
     tagWindow(e, window: targetWindow(pid: pid, at: e.location), at: e.location)
     e.postToPid(pid)
-    usleep(50_000)                                     // 投递是异步的：发完立刻退出，事件偶尔会被丢掉
-    print("已滚动 dy=\(dy) dx=\(dx) 行 @(\(Int(x)),\(Int(y)))")
+    usleep(50_000)                                     // posting is async: exiting right after the send occasionally drops the event
+    print("Scrolled dy=\(dy) dx=\(dx) rows @(\(Int(x)),\(Int(y)))")
 
 case "drag":
     guard args.count >= 6, let pid = pid_t(args[1]),
           let x1 = Double(args[2]), let y1 = Double(args[3]),
           let x2 = Double(args[4]), let y2 = Double(args[5]) else {
-        fail("用法: dsh-cu drag <pid> <x1> <y1> <x2> <y2> [--no-cursor]")
+        fail("Usage: dsh-cu drag <pid> <x1> <y1> <x2> <y2> [--no-cursor]")
     }
     requireAlive(pid)
     requireAX()
-    // 光标：先滑到起点、按住（尖端一圈光晕），跟着每一步走到终点，再松开 —— 跟浏览器拖拽一个样
+    // Cursor: glide to the start point, press and hold (a halo around the tip), follow each step to the endpoint, then release — just like a browser drag
     cursorOverlayOff = args.contains("--no-cursor")
     if !cursorOverlayOff {
         ensureOverlay()
@@ -519,9 +519,9 @@ case "drag":
     }
     let src = quietSource()
     let from = CGPoint(x: x1, y: y1), to = CGPoint(x: x2, y: y2)
-    // 整个拖拽都记在按下时的那个窗口上（AppKit 也是把拖动和松开交给按下的窗口）
+    // Attribute the whole drag to the window that was under the press (AppKit likewise routes drag and release to the window that received the press)
     let win = targetWindow(pid: pid, at: from)
-    let commandPress = needsCommandPress(pid: pid)       // 同 postClick：后台 Chromium 窗口按下要带 ⌘
+    let commandPress = needsCommandPress(pid: pid)       // same as postClick: the press on a background Chromium window carries ⌘
     func post(_ type: CGEventType, _ pt: CGPoint) {
         guard let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: pt, mouseButton: .left) else { return }
         e.setIntegerValueField(.mouseEventClickState, value: 1)
@@ -539,9 +539,9 @@ case "drag":
         usleep(15_000)
     }
     post(.leftMouseUp, to)
-    usleep(50_000)                                     // 等松开送到再退出，不然偶尔丢，目标会以为还按着
+    usleep(50_000)                                     // wait for the release to land before exiting, or it occasionally drops and the target thinks the button is still down
     overlayPing("up")
-    print("已拖拽 (\(Int(x1)),\(Int(y1))) → (\(Int(x2)),\(Int(y2)))")
+    print("Dragged (\(Int(x1)),\(Int(y1))) → (\(Int(x2)),\(Int(y2)))")
 
 case "apps":
     for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
@@ -550,33 +550,33 @@ case "apps":
     }
 
 case "launch":
-    guard args.count >= 2 else { fail("用法: dsh-cu launch <bundleId 或 应用名>") }
+    guard args.count >= 2 else { fail("Usage: dsh-cu launch <bundleId or app name>") }
     let target = args[1]
     let cfg = NSWorkspace.OpenConfiguration()
-    cfg.activates = false                       // 不抢前台
+    cfg.activates = false                       // don't steal focus
     let sem = DispatchSemaphore(value: 0)
     var launched: NSRunningApplication?
-    // bundleId 优先；查不到（或名字里本来就带点，如 Node.js）再按名字找，名字认各语言的本地化名
+    // bundleId first; if not found (or the name itself contains dots, e.g. Node.js), look up by name — names match localized names in any language
     var found = target.contains(".") ? NSWorkspace.shared.urlForApplication(withBundleIdentifier: target) : nil
     if found == nil { found = findApp(named: target) }
     if let url = found {
         NSWorkspace.shared.openApplication(at: url, configuration: cfg) { app, _ in launched = app; sem.signal() }
         _ = sem.wait(timeout: .now() + 10)
-        if let a = launched { print("已后台启动 \(a.localizedName ?? target) pid=\(a.processIdentifier)") }
-        else { fail("启动超时") }
+        if let a = launched { print("Launched \(a.localizedName ?? target) in background pid=\(a.processIdentifier)") }
+        else { fail("Launch timed out") }
     } else {
-        // 兜底：交给 LaunchServices 按名字找（-g = 不抢前台）
+        // Fallback: let LaunchServices find it by name (-g = don't steal focus)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
         p.arguments = ["-g", "-a", target]
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
-        do { try p.run() } catch { fail("找不到应用 \(target)") }
+        do { try p.run() } catch { fail("Can't find app \(target)") }
         p.waitUntilExit()
         guard p.terminationStatus == 0 else {
-            fail("找不到应用 \(target)（应用目录里的文件名、各语言名字都对不上，open -a 也找不到；可以改用 bundleId）")
+            fail("Can't find app \(target) (neither the filename in the app directories nor any localized name matches, and open -a can't find it either; try the bundleId instead)")
         }
-        // open 不回 pid：在运行中的应用里按名字找一下（要转 RunLoop，列表才会刷新）
+        // open doesn't return a pid: look the app up by name among running apps (the RunLoop has to spin for the list to refresh)
         let want = target.lowercased()
         var app: NSRunningApplication?
         for _ in 0..<20 where app == nil {
@@ -586,44 +586,44 @@ case "launch":
             }
             if app == nil { RunLoop.current.run(until: Date().addingTimeInterval(0.25)) }
         }
-        if let a = app { print("已后台启动 \(a.localizedName ?? target) pid=\(a.processIdentifier)") }
-        else { print("已后台启动 \(target)（pid 用 desktop_apps 查）") }
+        if let a = app { print("Launched \(a.localizedName ?? target) in background pid=\(a.processIdentifier)") }
+        else { print("Launched \(target) in background (check the pid with desktop_apps)") }
     }
 
 case "shot":
     let out = argValue("--out") ?? (NSTemporaryDirectory() as NSString).appendingPathComponent("dsh-cu-shot.png")
-    var rect: CGRect? = nil                     // nil = 整个主屏
-    var win: (id: CGWindowID, rect: CGRect)? = nil   // 给了 --pid / --window 就截这个窗口本身
+    var rect: CGRect? = nil                     // nil = the whole main display
+    var win: (id: CGWindowID, rect: CGRect)? = nil   // with --pid / --window given, capture that window itself
     if let r = argValue("--rect") {
         let n = r.split(separator: ",").compactMap { Double($0) }
-        guard n.count == 4, n[2] > 0, n[3] > 0 else { fail("--rect 要写成 x,y,宽,高（屏幕点），收到的是「\(r)」") }
+        guard n.count == 4, n[2] > 0, n[3] > 0 else { fail("--rect must be x,y,width,height (screen points), got \"\(r)\"") }
         rect = CGRect(x: n[0], y: n[1], width: n[2], height: n[3])
     } else if let p = argValue("--pid") {
-        guard let pid = pid_t(p) else { fail("--pid 要是数字") }
+        guard let pid = pid_t(p) else { fail("--pid must be a number") }
         guard let w = windowInfosOf(pid).first else { fail(noWindow(pid)) }
         win = w
     } else if let v = argValue("--window") {
-        guard let id = CGWindowID(v), let w = windowInfo(id) else { fail("窗口 \(v) 不在屏幕上（关掉了、最小化了，或在别的桌面空间）") }
+        guard let id = CGWindowID(v), let w = windowInfo(id) else { fail("Window \(v) isn't on screen (closed, minimized, or on another desktop space)") }
         win = w
     }
     let (img, covered) = win.map { captureWindow($0) } ?? capture(rect)
-    // 缩回「点」尺寸：图上 1 像素 = 屏幕 1 点，图上坐标加上 rect 原点就是点击坐标
+    // Scale back to "point" size: 1 image pixel = 1 screen point; adding the rect origin to image coordinates gives the click coordinate
     writePNG(img, to: out, size: covered.size)
     print(out)
     print("rect\t\(Int(covered.minX.rounded())),\(Int(covered.minY.rounded())) \(Int(covered.width.rounded()))×\(Int(covered.height.rounded()))")
 
 default:
-    fail("不认识的命令: \(cmd)")
+    fail("Unknown command: \(cmd)")
 }
 
-/// 某个 pid 的 AX 窗口（解锁后可用；锁屏时拿不到）
+/// A pid's AX windows (usable once unlocked; not obtainable while the screen is locked)
 func windowsOfAX(_ pid: pid_t) -> [AXUIElement] {
     let ax = AXUIElementCreateApplication(pid)
     return (attr(ax, kAXWindowsAttribute as String) as? [AXUIElement]) ?? []
 }
 
-/// 某个 pid 的普通窗口，前面的在前：窗口号 + 屏幕矩形（CGWindowList，不需要 AX）。
-/// 只有当前屏幕上看得到的：最小化的、在别的桌面空间的不在里面
+/// A pid's ordinary windows, frontmost first: window number + screen rect (CGWindowList, no AX needed).
+/// Only what's currently visible on screen: minimized windows and other desktop spaces are not included
 func windowInfosOf(_ pid: pid_t) -> [(id: CGWindowID, rect: CGRect)] {
     let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
     return info.compactMap { w in
@@ -633,7 +633,7 @@ func windowInfosOf(_ pid: pid_t) -> [(id: CGWindowID, rect: CGRect)] {
     }
 }
 
-/// 按窗口号找一个在屏幕上的普通窗口
+/// Find an on-screen ordinary window by window number
 func windowInfo(_ id: CGWindowID) -> (id: CGWindowID, rect: CGRect)? {
     let info = CGWindowListCopyWindowInfo([.optionIncludingWindow], id) as? [[String: Any]] ?? []
     guard let w = info.first, (w[kCGWindowIsOnscreen as String] as? Bool) == true else { return nil }
@@ -647,10 +647,10 @@ func cgWindow(_ w: [String: Any]) -> (id: CGWindowID, rect: CGRect)? {
 }
 
 func noWindow(_ pid: pid_t) -> String {
-    "pid \(pid) 没有可见窗口（应用没开窗口、窗口最小化了，或在别的桌面空间）"
+    "pid \(pid) has no visible windows (the app has no open window, its window is minimized, or it's on another desktop space)"
 }
 
-/// 按名字找应用：先认文件名，再认各语言的本地化名（「计算器」→ Calculator.app）
+/// Find an app by name: matches the filename first, then localized names in any language (a non-English display name still resolves to Calculator.app)
 func findApp(named target: String) -> URL? {
     let fm = FileManager.default
     let dirs = ["/System/Applications", "/Applications", "/System/Applications/Utilities", "/Applications/Utilities",
@@ -669,16 +669,16 @@ func findApp(named target: String) -> URL? {
     return nil
 }
 
-/// 一个应用的所有名字（小写）：文件名、当前语言的显示名、各语言的 CFBundleDisplayName / CFBundleName
+/// All names of an app (lowercased): filename, display name in the current language, per-language CFBundleDisplayName / CFBundleName
 func appNames(_ url: URL) -> Set<String> {
     let keys = ["CFBundleDisplayName", "CFBundleName"]
     let res = url.appendingPathComponent("Contents/Resources")
     var names = [url.deletingPathExtension().lastPathComponent, FileManager.default.displayName(atPath: url.path)]
-    // 系统应用：所有语言的名字在一个 InfoPlist.loctable 里
+    // System apps: all languages' names live in a single InfoPlist.loctable
     if let table = NSDictionary(contentsOf: res.appendingPathComponent("InfoPlist.loctable")) as? [String: Any] {
         for case let d as [String: Any] in table.values { names += keys.compactMap { d[$0] as? String } }
     }
-    // 第三方应用：每种语言一个 xx.lproj/InfoPlist.strings
+    // Third-party apps: one xx.lproj/InfoPlist.strings per language
     for lproj in (try? FileManager.default.contentsOfDirectory(atPath: res.path)) ?? [] where lproj.hasSuffix(".lproj") {
         let f = res.appendingPathComponent(lproj).appendingPathComponent("InfoPlist.strings")
         if let d = NSDictionary(contentsOf: f) as? [String: Any] { names += keys.compactMap { d[$0] as? String } }
@@ -686,13 +686,13 @@ func appNames(_ url: URL) -> Set<String> {
     return Set(names.map { $0.lowercased() })
 }
 
-// ── 截图：按显示器算原点和缩放比 ─────────────────────────────────────────────
-// CGWindowList / AX / CGEvent 用的都是全局「点」坐标（主屏左上为原点，副屏可以是负数）；
-// screencapture 出的是「像素」图（Retina 是 2 倍）。缩放比按实际出图算，不靠猜。
-// 截法：screencapture -R x,y,w,h 直接吃全局点坐标（它内部走 ScreenCaptureKit 的按矩形截图），
-// 不用猜 -D 的屏幕序号跟 CGGetActiveDisplayList 是不是一个顺序。矩形先裁到一块屏以内，缩放比才统一。
+// ── Screenshots: per-display origin and scale ─────────────────────────────────────────────
+// CGWindowList / AX / CGEvent all work in global "point" coordinates (origin at the main display's top-left; secondary displays can be negative);
+// screencapture outputs a "pixel" image (2x on Retina). The scale is computed from the actual output image, not guessed.
+// Capture method: screencapture -R x,y,w,h takes global point coordinates directly (internally it uses ScreenCaptureKit's rect capture),
+// so there's no guessing whether -D's display order matches CGGetActiveDisplayList. The rect is clipped to a single display first so the scale is uniform.
 
-/// 在用的显示器（全局点坐标）
+/// Active displays (global point coordinates)
 func displays() -> [CGRect] {
     var n: UInt32 = 0
     guard CGGetActiveDisplayList(0, nil, &n) == .success, n > 0 else { return [] }
@@ -701,8 +701,8 @@ func displays() -> [CGRect] {
     return ids.prefix(Int(n)).map { CGDisplayBounds($0) }
 }
 
-/// 要截的范围：rect 落在哪块屏（交集最大）就裁到那块屏以内、取整；rect 为 nil = 整个主屏。
-/// 返回（要截的全局矩形，它所在的那块屏）；不在任何屏上回 nil
+/// Capture target: clip the rect to the display it overlaps most (largest intersection), integral-aligned; rect nil = the whole main display.
+/// Returns (the global rect to capture, the display it's on); nil when it's on no display
 func captureTarget(_ rect: CGRect?, displays all: [CGRect], main: CGRect) -> (want: CGRect, screen: CGRect)? {
     guard let r = rect else { return (main, main) }
     let area = { (x: CGRect) -> CGFloat in x.isNull ? 0 : x.width * x.height }
@@ -713,18 +713,18 @@ func captureTarget(_ rect: CGRect?, displays all: [CGRect], main: CGRect) -> (wa
     return (want, b)
 }
 
-/// screencapture 的 -R 参数（全局点，整数）。贴着 -R 写，负坐标才不会被当成另一个选项
+/// The -R argument for screencapture (global points, integers). Written flush against -R so negative coordinates aren't mistaken for another option
 func rectArg(_ r: CGRect) -> String {
     "-R\(Int(r.minX)),\(Int(r.minY)),\(Int(r.width)),\(Int(r.height))"
 }
 
-/// 出图跟要截的范围同比例才算截对了（缩放比 = 像素 / 点）
+/// The capture only counts as correct when the image matches the requested rect's proportions (scale = pixels / points)
 func fits(_ img: CGImage, _ r: CGRect) -> Bool {
     let sx = CGFloat(img.width) / r.width, sy = CGFloat(img.height) / r.height
     return sx >= 0.5 && abs(sx - sy) < 0.05
 }
 
-/// 跑一次 screencapture（-x 不出声），把图读进内存；失败回 nil 和原因
+/// Run screencapture once (-x keeps it silent) and read the image into memory; returns nil plus a reason on failure
 func screencapture(_ opts: String...) -> (image: CGImage?, error: String) {
     let tmp = privateTemp("shot-\(UUID().uuidString.prefix(8)).png")
     defer { try? FileManager.default.removeItem(atPath: tmp) }
@@ -734,42 +734,42 @@ func screencapture(_ opts: String...) -> (image: CGImage?, error: String) {
     p.standardOutput = FileHandle.nullDevice
     let errPipe = Pipe()
     p.standardError = errPipe
-    do { try p.run() } catch { return (nil, "起不来 screencapture：\(error.localizedDescription)") }
+    do { try p.run() } catch { return (nil, "couldn't launch screencapture: \(error.localizedDescription)") }
     let errText = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
         .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
     p.waitUntilExit()
-    // 先整个读进内存再删文件：CGImageSource 可能按需回头读文件
+    // Read the whole file into memory before deleting it: CGImageSource may re-read the file on demand
     guard p.terminationStatus == 0, let data = FileManager.default.contents(atPath: tmp),
           let src = CGImageSourceCreateWithData(data as CFData, nil),
           let img = CGImageSourceCreateImageAtIndex(src, 0, nil) else {
-        return (nil, "screencapture \(opts.joined(separator: " ")) 退出码 \(p.terminationStatus)\(errText.isEmpty ? "" : "：\(errText)")")
+        return (nil, "screencapture \(opts.joined(separator: " ")) exit code \(p.terminationStatus)\(errText.isEmpty ? "" : ": \(errText)")")
     }
     return (img, "")
 }
 
-/// 截 rect（全局点）；rect 为 nil 就是整个主屏。返回像素图，和它实际覆盖的全局矩形（伸出屏幕的部分会被裁掉）
+/// Capture a rect (global points); rect nil = the whole main display. Returns the pixel image plus the global rect it actually covers (parts past the screen edge are cropped)
 func capture(_ rect: CGRect?) -> (image: CGImage, covered: CGRect) {
     let main = CGDisplayBounds(CGMainDisplayID())
     guard let t = captureTarget(rect, displays: displays(), main: main) else {
-        fail(rect == nil ? "找不到显示器" : "窗口不在任何一块屏幕的可见范围里")
+        fail(rect == nil ? "No display found" : "The window isn't within any display's visible area")
     }
     let shot = screencapture(rectArg(t.want))
     if let img = shot.image {
         guard fits(img, t.want) else {
-            fail("截到的图（\(img.width)×\(img.height) 像素）跟要截的范围（\(Int(t.want.width))×\(Int(t.want.height)) 点）对不上，坐标没法换算")
+            fail("Captured image (\(img.width)×\(img.height) px) doesn't match the requested rect (\(Int(t.want.width))×\(Int(t.want.height)) pt); coordinates can't be converted")
         }
         return (img, t.want)
     }
-    // -R 不行时：目标在主屏就退回整屏截再裁（-D1 文档写明是主屏，序号不会错）；副屏没有可靠的退路，直接报错
+    // When -R fails: if the target is on the main display, fall back to a full-display capture and crop (-D1 is documented as the main display, so the index can't be wrong); secondary displays have no reliable fallback, so fail outright
     if t.screen == main, let full = screencapture("-D1").image, fits(full, main),
        let cropped = full.cropping(to: pixelRect(t.want, screen: main, imageWidth: full.width, imageHeight: full.height)) {
         return (cropped, t.want)
     }
-    fail("截图失败（\(shot.error)）。多半是 DSH 没有屏幕录制权限，或屏幕锁着")
+    fail("Screenshot failed (\(shot.error)). Most likely DSH lacks Screen Recording permission, or the screen is locked")
 }
 
-/// 截窗口本身（-l 窗口号，-o 不带阴影）：被别的窗口挡住、在后台都截得到它自己，出图覆盖的就是窗口矩形。
-/// 截不到（窗口刚关、特殊窗口）或尺寸对不上，就退回按屏幕区域截
+/// Capture the window itself (-l window number, -o no shadow): captured even when covered by other windows or in the background; the image covers exactly the window rect.
+/// Falls back to a screen-area capture when the window capture fails (window just closed, special windows) or the size doesn't match
 func captureWindow(_ w: (id: CGWindowID, rect: CGRect)) -> (image: CGImage, covered: CGRect) {
     if w.rect.width >= 1, w.rect.height >= 1, let img = screencapture("-o", "-l\(w.id)").image, fits(img, w.rect) {
         return (img, w.rect)
@@ -777,13 +777,13 @@ func captureWindow(_ w: (id: CGWindowID, rect: CGRect)) -> (image: CGImage, cove
     return capture(w.rect)
 }
 
-/// 全局点矩形 → 那块屏截图里的像素矩形：先减屏幕原点，再乘这块屏的缩放比
+/// Global point rect → pixel rect within that display's capture: subtract the display origin, then multiply by that display's scale
 func pixelRect(_ r: CGRect, screen b: CGRect, imageWidth: Int, imageHeight: Int) -> CGRect {
     let sx = CGFloat(imageWidth) / b.width, sy = CGFloat(imageHeight) / b.height
     return CGRect(x: (r.minX - b.minX) * sx, y: (r.minY - b.minY) * sy, width: r.width * sx, height: r.height * sy).integral
 }
 
-/// 写 PNG；给了 size 就先缩放到那个像素尺寸（传「点」尺寸 = 图上 1 像素对应屏幕 1 点）
+/// Write a PNG; when size is given, first scale to that pixel size (passing a "point" size = 1 image pixel per screen point)
 func writePNG(_ img: CGImage, to path: String, size: CGSize? = nil) {
     var out = img
     if let s = size {
@@ -791,28 +791,28 @@ func writePNG(_ img: CGImage, to path: String, size: CGSize? = nil) {
         if w != img.width || h != img.height {
             guard let space = CGColorSpace(name: CGColorSpace.sRGB),
                   let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: space,
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("缩放截图失败") }
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { fail("Failed to scale the screenshot") }
             ctx.interpolationQuality = .high
             ctx.draw(img, in: CGRect(x: 0, y: 0, width: w, height: h))
-            guard let scaled = ctx.makeImage() else { fail("缩放截图失败") }
+            guard let scaled = ctx.makeImage() else { fail("Failed to scale the screenshot") }
             out = scaled
         }
     }
     guard let dest = CGImageDestinationCreateWithURL(URL(fileURLWithPath: path) as CFURL, "public.png" as CFString, 1, nil) else {
-        fail("写不了 \(path)")
+        fail("Can't write \(path)")
     }
     CGImageDestinationAddImage(dest, out, nil)
-    guard CGImageDestinationFinalize(dest) else { fail("写不了 \(path)") }
+    guard CGImageDestinationFinalize(dest) else { fail("Can't write \(path)") }
 }
 
-// ── 系统级光标浮层联动 ──────────────────────────────────────────────────────
-// 用 ~/.dsh/bin/dsh-cursor 那个常驻 NSPanel 浮层：操作时把光标飘过去，
-// 用户想看就看得见；它不抢前台、点击穿透，所以不影响任何东西。
-// 浮层没在跑就静默跳过。
+// ── System-level cursor overlay sync ──────────────────────────────────────────────────────
+// Uses the resident NSPanel overlay at ~/.dsh/bin/dsh-cursor: during actions the cursor floats over,
+// there to watch if the user wants to; it doesn't steal focus and is click-through, so it affects nothing.
+// Skipped silently when the overlay isn't running.
 
 var cursorOverlayOff = false
 
-/// FIFO 能以非阻塞方式打开 = 有读者 = 浮层活着、收得到指令
+/// FIFO opens in non-blocking mode = there's a reader = the overlay is alive and receiving commands
 func overlayReady() -> Bool {
     let fd = open(cursorFifo, O_WRONLY | O_NONBLOCK)
     guard fd >= 0 else { return false }
@@ -823,29 +823,29 @@ func overlayReady() -> Bool {
 func overlayRunning() -> Bool {
     let probe = Process()
     probe.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-    probe.arguments = ["-U", String(getuid()), "-f", "dsh-cursor-overlay"]   // 只认自己账号的，别的账号开着浮层不算
+    probe.arguments = ["-U", String(getuid()), "-f", "dsh-cursor-overlay"]   // only this account's counts; an overlay run by another account doesn't
     probe.standardOutput = FileHandle.nullDevice
     probe.standardError = FileHandle.nullDevice
     try? probe.run(); probe.waitUntilExit()
     return probe.terminationStatus == 0
 }
 
-/// 浮层没在跑就拉起来（跟插件里的 ensureCursor 一个意思，让命令行单独用也有特效）
+/// Start the overlay when it isn't running (same idea as the plugin's ensureCursor, so the CLI on its own still gets the effects)
 func ensureOverlay() {
     if overlayReady() { return }
-    // 进程在、FIFO 还没好 = 刚起（刚装好的二进制第一次启动 macOS 要验一下，会慢一点）：等它，别再起第二个
+    // Process alive but FIFO not ready = just started (the first launch of a freshly installed binary triggers a macOS verification and is slower): wait for it instead of starting a second one
     if !overlayRunning() {
         let bin = NSString(string: "~/.dsh/bin/dsh-cursor-overlay").expandingTildeInPath
         guard FileManager.default.isExecutableFile(atPath: bin) else { return }
-        try? FileManager.default.removeItem(atPath: cursorFifo)   // 进程被 kill 后残留的，清掉
+        try? FileManager.default.removeItem(atPath: cursorFifo)   // stale leftover after the process was killed; clean it up
         let p = Process()
         p.executableURL = URL(fileURLWithPath: bin)
-        p.arguments = ["--fifo", cursorFifo]                      // 明着传：旧版浮层默认还是 /tmp 下那个公用路径
+        p.arguments = ["--fifo", cursorFifo]                      // pass it explicitly: older overlays still default to the shared /tmp path
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         try? p.run()
     }
-    for _ in 0..<40 {                                     // 最多等 2 秒
+    for _ in 0..<40 {                                     // wait at most 2 seconds
         if overlayReady() { return }
         usleep(50_000)
     }
@@ -854,8 +854,8 @@ func ensureOverlay() {
 func overlayPing(_ cmd: String) {
     guard !cursorOverlayOff else { return }
     let fifo = cursorFifo
-    // 关键：O_NONBLOCK。FIFO 没读者时普通 open 会**永久阻塞**，
-    // 之前就是这样把整个点击卡超时的。没读者就直接跳过，绝不能拖慢操作。
+    // Key detail: O_NONBLOCK. A plain open on a FIFO with no reader **blocks forever** —
+    // that's exactly what used to time out whole clicks. Skip outright when there's no reader; never slow the action down.
     let fd = open(fifo, O_WRONLY | O_NONBLOCK)
     guard fd >= 0 else { return }
     var bytes = Array((cmd + "\n").utf8)
@@ -863,12 +863,12 @@ func overlayPing(_ cmd: String) {
     close(fd)
 }
 
-// ── CGEvent 投递（不移动真实鼠标）────────────────────────────────────────────
+// ── CGEvent posting (doesn't move the real mouse) ────────────────────────────────────────────
 
-/// 目标进程在这个点上最靠前的窗口：窗口号 + 窗口左上角（屏幕坐标，左上原点）。没有就 nil
+/// The target process's frontmost window at this point: window number + window top-left (screen coordinates, top-left origin). nil when none
 func targetWindow(pid: pid_t, at p: CGPoint) -> (number: Int64, origin: CGPoint)? {
     guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return nil }
-    for w in list {                                      // 列表是从前往后排的
+    for w in list {                                      // the list is ordered front to back
         guard (w[kCGWindowOwnerPID as String] as? Int).map({ pid_t($0) }) == pid,
               let b = w[kCGWindowBounds as String] as? NSDictionary,
               let r = CGRect(dictionaryRepresentation: b as CFDictionary), r.contains(p),
@@ -879,18 +879,18 @@ func targetWindow(pid: pid_t, at p: CGPoint) -> (number: Int64, origin: CGPoint)
     return nil
 }
 
-/// 事件里没公开的两样东西。放在 enum 的静态成员里（用到时才初始化）：这个文件是脚本式顶层代码，
-/// 写在 switch 后面的全局 let 在 switch 跑的时候还没赋值，读到的是 0 / nil
+/// Two things not exposed on the event. Held as enum static members (initialized on first use): this file is script-style top-level code,
+/// so a global let declared after the switch isn't assigned yet while the switch runs — you'd read 0 / nil
 enum WindowEventFields {
     typealias SetWindowLocation = @convention(c) (CGEvent, CGPoint) -> Void
-    /// 系统私有的 CGEventSetWindowLocation（窗口内坐标）。按名字现找，找不到就只填窗口号
+    /// The system-private CGEventSetWindowLocation (window-local coordinates). Looked up by name at runtime; when absent, only the window number is filled
     static let setWindowLocation: SetWindowLocation? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGEventSetWindowLocation")
         .map { unsafeBitCast($0, to: SetWindowLocation.self) }
-    /// 窗口号字段：没写进公开头文件，AppKit 的 NSEvent.windowNumber 读的就是它
+    /// Window-number field: absent from the public headers; AppKit's NSEvent.windowNumber reads exactly this
     static let windowNumber = CGEventField(rawValue: 51)!
 }
 
-/// 目标是不是 Chromium 内核（Electron 应用、Chrome 系浏览器）：看应用包里有没有这类框架
+/// Whether the target is Chromium-based (Electron apps, Chrome-family browsers): checks the app bundle for such frameworks
 func isChromium(pid: pid_t) -> Bool {
     guard let url = NSRunningApplication(processIdentifier: pid)?.bundleURL else { return false }
     let fw = url.appendingPathComponent("Contents/Frameworks")
@@ -902,25 +902,25 @@ func isChromium(pid: pid_t) -> Bool {
     }
 }
 
-/// 后台的 Chromium / Electron 窗口不收「激活窗口的那一下」点击（DSH 自己就是），按下也就被丢了。
-/// 按下那一下带上 ⌘：AppKit 会把它直接交给页面、不激活窗口。松开和 click 不带 ⌘，页面看到的就是普通点击
+/// Background Chromium / Electron windows don't accept the focus-activating click (DSH itself is one), so the press just gets dropped.
+/// Carrying ⌘ on the press makes AppKit hand it straight to the page without activating the window. Release and click go without ⌘, so the page sees a plain click
 func needsCommandPress(pid: pid_t) -> Bool {
     guard let app = NSRunningApplication(processIdentifier: pid), !app.isActive else { return false }
     return isChromium(pid: pid)
 }
 
-/// postToPid 造出来的鼠标事件不带窗口号（0）、也没有窗口内坐标。AppKit / Electron 找不到窗口，
-/// 就把点击、拖拽、滚轮丢了（DSH 自己的窗口、普通 AppKit 窗口都这样）。
-/// 填上窗口号和窗口内坐标，事件才会送进那个窗口，而且照样不抢前台、不动真实鼠标
+/// Mouse events built via postToPid carry no window number (0) and no window-local coordinates. AppKit / Electron can't identify the window
+/// and drop the click, drag, or wheel event (true of DSH's own windows and ordinary AppKit windows alike).
+/// Filling in the window number and window-local coordinates routes the event into that window — still without stealing focus or moving the real mouse
 func tagWindow(_ e: CGEvent, window: (number: Int64, origin: CGPoint)?, at p: CGPoint) {
     guard let w = window else { return }
     e.setIntegerValueField(WindowEventFields.windowNumber, value: w.number)
     WindowEventFields.setWindowLocation?(e, CGPoint(x: p.x - w.origin.x, y: p.y - w.origin.y))
 }
 
-/// 投递给目标进程的事件用这个源。系统默认每发一个合成事件，就把本机真实的键盘鼠标冻住 0.25 秒
-/// （localEventsSuppressionInterval）：点一下卡一下，给 Chromium 逐字打字时整段都动不了，
-/// 用户觉得插件在跟他抢鼠标（issue #2，实测发事件期间真实鼠标一像素都动不了）。投递给 pid 的事件不碰真实鼠标，不用冻
+/// Event source for events posted to the target process. By default the system freezes the local real keyboard and mouse for 0.25 seconds on every synthetic event
+/// (localEventsSuppressionInterval): each click stutters, and typing into Chromium character by character blocks the whole session,
+/// leaving users with the feeling that the plugin is fighting them for the mouse (issue #2; measured — the real mouse couldn't move a pixel while events were being sent). Events posted to a pid never touch the real mouse, so no freezing is needed
 func quietSource() -> CGEventSource? {
     guard let s = CGEventSource(stateID: .hidSystemState) else { return nil }
     s.localEventsSuppressionInterval = 0
@@ -930,7 +930,7 @@ func quietSource() -> CGEventSource? {
     return s
 }
 
-/// global=false：投递给目标进程（不移动真实鼠标）；true：走系统事件（会移动真实鼠标，兼容性最好）
+/// global=false: post to the target process (doesn't move the real mouse); true: go through system events (moves the real mouse, best compatibility)
 func postClick(pid: pid_t, at point: CGPoint, global: Bool = false) -> Bool {
     let src = global ? CGEventSource(stateID: .hidSystemState) : quietSource()
     let win = global ? nil : targetWindow(pid: pid, at: point)
@@ -939,7 +939,7 @@ func postClick(pid: pid_t, at point: CGPoint, global: Bool = false) -> Bool {
         guard let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: point, mouseButton: button) else { return false }
         e.setIntegerValueField(.mouseEventClickState, value: 1)
         if global {
-            if type == .leftMouseDown { CGWarpMouseCursorPosition(point) }   // 让光标也过去
+            if type == .leftMouseDown { CGWarpMouseCursorPosition(point) }   // bring the cursor along too
             e.post(tap: .cghidEventTap)
         } else {
             tagWindow(e, window: win, at: point)
@@ -948,13 +948,13 @@ func postClick(pid: pid_t, at point: CGPoint, global: Bool = false) -> Bool {
         }
         usleep(30_000)
     }
-    if !global { makeMainWindow(pid: pid, at: point) }   // 跟真点一样：点了哪个窗口，接下来的输入就进哪个
+    if !global { makeMainWindow(pid: pid, at: point) }   // like a real click: whichever window got clicked, the next input goes there
     return true
 }
 
-/// 后台应用没有「当前窗口」时，发给它的按键没人接，打的字全丢（Chromium / Electron 必然这样，DSH 自己就是）。
-/// 用辅助功能把窗口设成它自己的主窗口：应用不会被激活、不抢前台，按键就有了去处。
-/// 给了坐标就设那个点上的窗口（点哪个窗口，之后的输入就进哪个），没给就设它现在的主窗口
+/// When a background app has no "current window", keys sent to it have no receiver and typed text is entirely lost (always true of Chromium / Electron, DSH itself included).
+/// Use accessibility to set one of its windows as the app's main window: the app isn't activated, doesn't steal focus, and the keys have somewhere to land.
+/// With a coordinate, the window at that point is targeted (whichever window got clicked, the following input goes there); without one, its current main window is targeted
 func makeMainWindow(pid: pid_t, at p: CGPoint? = nil) {
     guard let app = NSRunningApplication(processIdentifier: pid), !app.isActive else { return }
     let ax = AXUIElementCreateApplication(pid)
@@ -974,8 +974,8 @@ func makeMainWindow(pid: pid_t, at p: CGPoint? = nil) {
 func postText(pid: pid_t, _ text: String) -> Bool {
     let src = quietSource()
     let units = Array(text.utf16)
-    // AppKit 应用一个按键事件就能收下整段字。Chromium / Electron 在后台只认一个字符的按键，
-    // 一次塞多个字（中文、表情、"ab"）整段丢，所以拆成一个 UTF-16 单元一发（表情的两半它自己会拼上）
+    // An AppKit app accepts a whole run of text in a single key event. Chromium / Electron in the background only accepts single-character presses —
+    // stuffing several characters at once (Chinese, emoji, "ab") drops the whole batch, so send one UTF-16 unit per event (it rejoins both halves of an emoji itself)
     let chunks = isChromium(pid: pid) ? units.map { [$0] } : [units]
     for chunk in chunks {
         guard let down = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true),
@@ -987,6 +987,6 @@ func postText(pid: pid_t, _ text: String) -> Bool {
         up.postToPid(pid)
         if chunks.count > 1 { usleep(5_000) }
     }
-    usleep(20_000)                                     // 同上：等松键送到再退出
+    usleep(20_000)                                     // same as above: wait for the key-up to land before exiting
     return true
 }

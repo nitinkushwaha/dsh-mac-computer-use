@@ -48,7 +48,7 @@
         font-size="14.5" fill="#8b949e">Vision-first desktop control for DSH on macOS, no accessibility tree.</text>
 
   <text x="146" y="138" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif"
-        font-size="14.5" fill="#8b949e">让 DSH 看着屏幕操作你的 Mac：OCR 认字定位、编号标注，桌面光标看得见。</text>
+        font-size="14.5" fill="#8b949e">Lets DSH operate your Mac by sight: OCR-based locating, numbered marks, visible desktop cursor.</text>
 
   <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif" font-size="12" font-weight="600">
     <g class="pill">

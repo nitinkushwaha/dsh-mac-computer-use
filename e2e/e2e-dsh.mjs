@@ -1,12 +1,12 @@
 /**
- * 真机端到端：在一台没装过任何东西的 Mac 上，只靠安装包能不能用
- *   ① 打包（prepack 编出通用程序），包里带着 bin/dsh-cu 和 bin/dsh-cursor-overlay，可执行、签过名、两种芯片都有
- *   ② 装进全新的 DSH（dsh plugin add），起网页版；设置页报「命令行工具已装好 · 插件自带」
- *   ③ 装好的那份程序能跑：协议号对得上；有 Rosetta 的话 Intel 那一半也跑一下
- *   ④ 插件自己的 desktop_windows 工具走自带的程序列出窗口
+ * Real-machine end-to-end: on a Mac with nothing preinstalled, does the package alone suffice
+ *   ① pack (prepack builds the universal binaries); the package carries bin/dsh-cu and bin/dsh-cursor-overlay, executable, signed, both architectures
+ *   ② install into a fresh DSH (dsh plugin add), start the web app; the settings panel reports "command-line tool installed · bundled with the plugin"
+ *   ③ the installed binaries run: the protocol version matches; if Rosetta is present, the Intel slice runs too
+ *   ④ the plugin's own desktop_windows tool lists windows through the bundled binary
  *
- *   node e2e/e2e-dsh.mjs [--dsh latest|next|<版本>]
- * HOME、DSH_HOME 都是临时的：没有 ~/.dsh/bin，证明不靠 install.sh。不是 macOS 就跳过。
+ *   node e2e/e2e-dsh.mjs [--dsh latest|next|<version>]
+ * HOME and DSH_HOME are temporary: there is no ~/.dsh/bin, proving install.sh is not needed. Skipped unless macOS.
  */
 
 import fs from 'node:fs'
@@ -29,8 +29,8 @@ const summary = (title, lines) => {
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## ${title}\n\n${lines.join('\n')}\n\n`)
 }
 if (process.platform !== 'darwin') {
-  console.log(`只支持 macOS，${OS} 上跳过`)
-  summary(`Mac 桌面真机测试 · ${OS}`, ['- ⏭ 只支持 macOS，跳过'])
+  console.log(`macOS only; skipped on ${OS}`)
+  summary(`Mac desktop real-machine test · ${OS}`, ['- ⏭ macOS only, skipped'])
   process.exit(0)
 }
 
@@ -67,7 +67,7 @@ function get(url) {
   })
 }
 
-/** DSH 装好的插件目录里那份程序（DSH_HOME 下的 node_modules，按真实路径去重） */
+/** The binaries inside the plugin directory DSH installed (node_modules under DSH_HOME, deduplicated by real path) */
 function installedBins(dir, out = new Set(), depth = 0) {
   if (depth > 12) return out
   let entries = []
@@ -85,27 +85,27 @@ let webLog = ''
 let dshVersion = DSH_SPEC
 
 try {
-  // ① 打包：prepack 编出自带程序
+  // ① pack: prepack builds the bundled binaries
   fs.mkdirSync(path.join(tmp, 'cli'), { recursive: true })
   const pack = run('npm', ['pack', '--pack-destination', tmp], { cwd: path.join(ROOT, 'plugin') })
   const tgz = fs.readdirSync(tmp).find((f) => f.endsWith('.tgz'))
-  if (!check('打包（顺带编好自带程序）', pack.code === 0 && tgz, pack.out.slice(-1500))) throw new Error('打包失败')
+  if (!check('pack (also builds the bundled binaries)', pack.code === 0 && tgz, pack.out.slice(-1500))) throw new Error('pack failed')
   const listing = run('tar', ['-tvzf', path.join(tmp, tgz)]).out
   for (const name of ['dsh-cu', 'dsh-cursor-overlay']) {
     const line = listing.split('\n').find((l) => l.endsWith(`package/bin/${name}`)) || ''
-    check(`安装包里带着 ${name}，可执行`, /^-rwxr-xr-x/.test(line), line || '没有')
+    check(`package carries ${name}, executable`, /^-rwxr-xr-x/.test(line), line || 'missing')
   }
 
-  // ② 装进全新的 DSH
+  // ② install into a fresh DSH
   fs.writeFileSync(path.join(tmp, 'cli', 'package.json'), '{"private":true}')
   const inst = run('npm', ['i', `@deepseek-ai/dsh@${DSH_SPEC}`, 'pnpm@11', `--registry=${REGISTRY}`, '--no-audit', '--no-fund', '--loglevel=error'], { cwd: path.join(tmp, 'cli') })
-  if (!check(`装 DSH ${DSH_SPEC}`, inst.code === 0, inst.out.slice(-1500))) throw new Error('DSH 没装上')
+  if (!check(`install DSH ${DSH_SPEC}`, inst.code === 0, inst.out.slice(-1500))) throw new Error('DSH not installed')
   const cliDir = path.join(tmp, 'cli', 'node_modules', '@deepseek-ai', 'dsh')
   dshVersion = JSON.parse(fs.readFileSync(path.join(cliDir, 'package.json'), 'utf8')).version
   console.log(`  DSH ${dshVersion}`)
   const add = run(process.execPath, [path.join(cliDir, 'lib', 'bin.js'), 'plugin', '--profile', 'web', 'add', path.join(tmp, tgz)], { cwd: tmp })
-  if (!check('DSH 装上插件', add.code === 0, add.out.slice(-1500))) throw new Error('插件没装上')
-  check('没有 ~/.dsh/bin（不靠 install.sh）', !fs.existsSync(path.join(HOME, '.dsh', 'bin', 'dsh-cu')))
+  if (!check('DSH installed the plugin', add.code === 0, add.out.slice(-1500))) throw new Error('plugin not installed')
+  check('no ~/.dsh/bin (install.sh not needed)', !fs.existsSync(path.join(HOME, '.dsh', 'bin', 'dsh-cu')))
 
   const url = await new Promise((resolve) => {
     web = spawn(process.execPath, [path.join(cliDir, 'lib', 'bin.js'), 'web', '--no-open', '--port', '0', '--host', '127.0.0.1'], { env, cwd: tmp, stdio: ['ignore', 'pipe', 'pipe'] })
@@ -115,7 +115,7 @@ try {
     web.on('exit', () => resolve(null))
     setTimeout(() => resolve(null), 180_000)
   })
-  if (!check('DSH 网页版起来了', url, webLog.slice(-2000))) throw new Error('网页版没起来')
+  if (!check('DSH web app started', url, webLog.slice(-2000))) throw new Error('web app did not start')
 
   let st = null
   let last = ''
@@ -127,42 +127,42 @@ try {
     } catch (e) { last = e.message }
     if (!st) await sleep(1000)
   }
-  if (!check('设置页接口能用', st, last)) throw new Error('设置页没数据')
-  check('设置页报的插件版本对', st.plugin === PKG.version, st.plugin)
-  check('设置页：命令行工具已装好 · 插件自带', st.bin && st.bin.source === 'bundled' && !st.bin.outdated, JSON.stringify(st.bin))
-  check('设置页：光标浮层在', st.overlay && st.overlay.installed, JSON.stringify(st.overlay))
+  if (!check('settings panel API works', st, last)) throw new Error('settings panel has no data')
+  check('settings panel reports the right plugin version', st.plugin === PKG.version, st.plugin)
+  check('settings panel: CLI tool installed · bundled with the plugin', st.bin && st.bin.source === 'bundled' && !st.bin.outdated, JSON.stringify(st.bin))
+  check('settings panel: cursor overlay installed', st.overlay && st.overlay.installed, JSON.stringify(st.overlay))
 
-  // ③ 装好的那份程序
+  // ③ the installed binaries
   const bins = [...installedBins(path.join(tmp, 'dsh-home'))]
-  if (!check('DSH 装好的插件里有自带程序', bins.length > 0, '没找到')) throw new Error('没找到装好的程序')
+  if (!check('bundled binaries present in the installed plugin', bins.length > 0, 'not found')) throw new Error('installed binaries not found')
   const bin = bins[0]
-  check('协议号对得上', run(bin, ['version']).out === ENGINE_PROTOCOL, run(bin, ['version']).out)
+  check('protocol version matches', run(bin, ['version']).out === ENGINE_PROTOCOL, run(bin, ['version']).out)
   const archs = run('lipo', ['-archs', bin]).out
-  check('Apple 芯片和 Intel 都有', /arm64/.test(archs) && /x86_64/.test(archs), archs)
-  check('签过名（Apple 芯片只跑签名的程序）', run('codesign', ['-v', bin]).code === 0, run('codesign', ['-v', bin]).out)
+  check('both Apple silicon and Intel slices present', /arm64/.test(archs) && /x86_64/.test(archs), archs)
+  check('signed (Apple silicon runs only signed binaries)', run('codesign', ['-v', bin]).code === 0, run('codesign', ['-v', bin]).out)
   const minos = (/minos (\S+)/.exec(run('vtool', ['-show-build', bin]).out) || [])[1]
-  check('最低支持 macOS 11', minos === '11.0', minos)
+  check('minimum macOS 11', minos === '11.0', minos)
   if (run('arch', ['-x86_64', '/usr/bin/true']).code === 0) {
-    check('Intel 那一半也能跑（Rosetta）', run('arch', ['-x86_64', bin, 'version']).out === ENGINE_PROTOCOL)
+    check('Intel slice runs too (Rosetta)', run('arch', ['-x86_64', bin, 'version']).out === ENGINE_PROTOCOL)
   } else {
-    console.log('  （这台没有 Rosetta，Intel 那一半不跑）')
+    console.log('  (no Rosetta on this machine; Intel slice not run)')
   }
 
-  // ④ 插件自己的工具
+  // ④ the plugin's own tools
   const plugin = await import(pathToFileURL(path.join(path.dirname(path.dirname(bin)), 'index.js')))
   const tools = new Map()
   plugin.apply({ tools: { register: (t) => tools.set(t.name, t) }, get() {}, inject() {} }, {})
-  check('注册了 desktop_* 工具', tools.size >= 10 && tools.has('desktop_windows'), [...tools.keys()].join(','))
+  check('desktop_* tools registered', tools.size >= 10 && tools.has('desktop_windows'), [...tools.keys()].join(','))
   const r = await tools.get('desktop_windows').execute({}, {})
-  check('desktop_windows 用自带程序列出窗口', /pid=\d+ win=\d+/.test(String(r.text)) || r.text === '(没有匹配的窗口)', String(r.text).slice(0, 300))
+  check('desktop_windows lists windows via the bundled binary', /pid=\d+ win=\d+/.test(String(r.text)) || r.text === '(no matching windows)', String(r.text).slice(0, 300))
 } catch (e) {
-  check('没有异常', false, (e && e.stack) || e)
+  check('no exception', false, (e && e.stack) || e)
 } finally {
-  if (failed().length) console.log(`\n── DSH 网页版日志 ──\n${webLog.split('\n').slice(-30).join('\n')}`)
+  if (failed().length) console.log(`\n── DSH web app log ──\n${webLog.split('\n').slice(-30).join('\n')}`)
   if (web && web.exitCode === null) web.kill('SIGTERM')
   await sleep(1500)
   try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5 }) } catch {}
-  summary(`Mac 桌面真机测试 · ${OS} · DSH ${dshVersion}`, results.map((x) => `- ${x.ok ? '✅' : '❌'} ${x.name}${x.ok ? '' : `：${x.extra.split('\n')[0]}`}`))
-  console.log(failed().length ? `\n❌ ${failed().length} 项没过` : '\n✅ 全部通过')
+  summary(`Mac desktop real-machine test · ${OS} · DSH ${dshVersion}`, results.map((x) => `- ${x.ok ? '✅' : '❌'} ${x.name}${x.ok ? '' : `: ${x.extra.split('\n')[0]}`}`))
+  console.log(failed().length ? `\n❌ ${failed().length} failed` : '\n✅ all passed')
   process.exit(failed().length ? 1 : 0)
 }

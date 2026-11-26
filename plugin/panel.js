@@ -1,12 +1,12 @@
 /**
- * DSH 插件页里那张设置卡的后端：一条 HTTP 路由，挂在 DSH 自己的 webServer 上。
+ * Backend for the settings card on DSH's plugin page: one HTTP route mounted on DSH's own webServer.
  *
- *   GET  /dsh-mac-computer-use/panel           → 状态（命令行工具、光标浮层、两项系统权限、看得到几个窗口、光标开关）
- *   POST /dsh-mac-computer-use/panel {action}  → cursor / copyInstall / copyUpdate / openSettings，回新状态
+ *   GET  /dsh-mac-computer-use/panel           → status (command-line tool, cursor overlay, the two system permissions, visible window count, cursor switch)
+ *   POST /dsh-mac-computer-use/panel {action}  → cursor / copyInstall / copyUpdate / openSettings, returns the new status
  *
- * 页面（client.js）跑在 DSH 的网页端，只能走 HTTP。webServer 本身不做鉴权，
- * 而浏览器里随便哪个网页都摸得到 127.0.0.1，所以自己把门：只收本机连接、Host 必须是本机名、
- * 跨站的 Origin 一律拒、POST 必须是 JSON（跨站发不出来，会先被预检挡住）。
+ * The page (client.js) runs in DSH's web client and can only use HTTP. The webServer does no auth of its own,
+ * and from a browser any web page can reach 127.0.0.1, so gate it here: loopback connections only, Host must be a local name,
+ * cross-site Origin always rejected, POST must be JSON (cross-site requests cannot send that; they get blocked by the preflight first).
  */
 
 import { execFile, execFileSync } from 'node:child_process'
@@ -24,7 +24,7 @@ const PKG_VERSION = (() => {
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i
 
-/** 能看到几个窗口：证明命令行工具真的跑得起来。跑不起来回 null。 */
+/** How many windows are visible: proves the command-line tool really runs. Returns null when it cannot. */
 function countWindows(bin) {
   return new Promise((resolve) => {
     execFile(bin, ['winlist'], { timeout: 5000 }, (err, out) => {
@@ -33,7 +33,7 @@ function countWindows(bin) {
   })
 }
 
-/** 引擎支持的增强（dsh-cu features，一行一个）。旧引擎没这个命令，回空集合 */
+/** Engine feature flags (dsh-cu features, one per line). Old engines lack the command; returns an empty set */
 function engineFeatures(bin) {
   return new Promise((resolve) => {
     execFile(bin, ['features'], { timeout: 5000 }, (err, out) => {
@@ -53,7 +53,7 @@ export async function panelState() {
   return { ...base, bin: bin && { source: bin.source, outdated }, overlay: overlayState(), perms, windows }
 }
 
-/** 跨站请求一律拒：没带 Origin（同源 GET、curl）放行；带了就必须是 DSH 自己。 */
+/** Cross-site requests are always rejected: no Origin header (same-origin GET, curl) passes; if present, it must be DSH itself. */
 function allowed(req, origin) {
   if (!LOOPBACK.has(req.socket.remoteAddress)) return false
   if (!LOOPBACK_HOST.test(req.headers.host || '')) return false
@@ -77,18 +77,18 @@ function readJson(req, limit = 4096) {
     const chunks = []
     req.on('data', (c) => {
       size += c.length
-      if (size > limit) { reject(new Error('请求太大')); req.destroy() } else chunks.push(c)
+      if (size > limit) { reject(new Error('request too large')); req.destroy() } else chunks.push(c)
     })
     req.on('end', () => {
-      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')) } catch { reject(new Error('不是 JSON')) }
+      try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}')) } catch { reject(new Error('not JSON')) }
     })
     req.on('error', reject)
   })
 }
 
 /**
- * @param deps.origin - DSH 网页端自己的 origin（webServer.getOrigin）
- * @param deps.trace - 日志
+ * @param deps.origin - the origin of DSH's own web client (webServer.getOrigin)
+ * @param deps.trace - logging
  */
 export function panelHandler({ origin, trace = () => {} }) {
   return async (req, res) => {
@@ -97,7 +97,7 @@ export function panelHandler({ origin, trace = () => {} }) {
       res.end(JSON.stringify(body))
     }
     if (!allowed(req, origin)) {
-      trace(`设置页路由拒绝了一个请求：${req.socket.remoteAddress} host=${req.headers.host} origin=${req.headers.origin}`)
+      trace(`settings panel route rejected a request: ${req.socket.remoteAddress} host=${req.headers.host} origin=${req.headers.origin}`)
       return send(403, { error: 'forbidden' })
     }
     if (req.method === 'GET') return send(200, await panelState())
@@ -112,7 +112,7 @@ export function panelHandler({ origin, trace = () => {} }) {
         case 'cursor':
           writeConfig({ showCursor: !!body.on })
           if (!body.on) stopOverlay()
-          trace(`设置页：桌面光标 ${body.on ? '开' : '关'}`)
+          trace(`settings panel: desktop cursor ${body.on ? 'on' : 'off'}`)
           break
         case 'copyInstall':
           execFileSync('/usr/bin/pbcopy', [], { input: INSTALL_CMD })
@@ -124,13 +124,13 @@ export function panelHandler({ origin, trace = () => {} }) {
           break
         case 'openSettings': {
           const url = SETTINGS_PANES[body.pane]
-          if (!url) return send(400, { error: `不认识的 pane: ${body.pane}` })
+          if (!url) return send(400, { error: `unknown pane: ${body.pane}` })
           execFileSync('/usr/bin/open', [url], { stdio: 'ignore' })
           extra.opened = body.pane
           break
         }
         default:
-          return send(400, { error: `不认识的 action: ${body.action}` })
+          return send(400, { error: `unknown action: ${body.action}` })
       }
     } catch (e) {
       return send(200, { ...(await panelState()), actionError: String((e && e.message) || e) })

@@ -1,11 +1,11 @@
 /**
- * DSH 设置卡（plugin/panel.js + setup.js）和「显示光标」开关的测试。
+ * Tests for the DSH settings card (plugin/panel.js + setup.js) and the "show cursor" switch.
  *
  *   node tools/test-panel.mjs
  *
- * 用一个假的 dsh-cu（只把参数记下来）和临时配置文件，不碰真设置、不真去点屏幕、不拉起光标浮层。
- * 唯一的副作用：「关光标」会结束正在跑的光标浮层（下次操作它自己会起来）。
- * 权限那一项会真跑一次 osascript：查到的是跑这个脚本的应用的权限，只验格式。
+ * Uses a fake dsh-cu (only logs its arguments) and a temp config file; no real settings are touched, nothing is really clicked on screen, the cursor overlay is never started.
+ * The only side effect: "cursor off" kills a running cursor overlay (it starts itself again on the next action).
+ * The permission check really runs osascript once: it reports the permissions of whatever app runs this script; only the shape is verified.
  */
 
 import assert from 'node:assert'
@@ -31,7 +31,7 @@ const { panelHandler, PANEL_ROUTE } = await import('../plugin/panel.js')
 const { readConfig } = await import('../plugin/setup.js')
 const plugin = await import('../plugin/index.js')
 
-// 插件 apply：假 ctx，把工具和路由收下来
+// plugin apply with a fake ctx, capturing the tools and the route
 const tools = {}
 let route = null
 plugin.apply({
@@ -63,7 +63,7 @@ const req = (method, body, headers = {}) => new Promise((resolve, reject) => {
   r.end()
 })
 
-// 动作前后各查一次窗口清单（winlist），取最后一条不是 winlist 的
+// the window list (winlist) is queried once before and once after each action; take the last logged line that is not winlist
 const lastArgs = () => fs.readFileSync(argLog, 'utf8').trim().split('\n').filter((l) => !l.startsWith('winlist')).pop()
 
 const results = []
@@ -72,13 +72,13 @@ const check = async (name, fn) => {
 }
 
 try {
-  await check('插件挂上了 11 个工具和设置页路由', async () => {
+  await check('plugin registered 11 tools and the settings panel route', async () => {
     assert.equal(Object.keys(tools).length, 11)
     assert.equal(route && route.path, PANEL_ROUTE)
     assert.equal(route.kind, 'exact')
   })
 
-  await check('读状态：找到命令行、数出窗口、权限有格式、光标默认开', async () => {
+  await check('read state: CLI found, windows counted, permissions well-formed, cursor on by default', async () => {
     const { status, body } = await req('GET')
     assert.equal(status, 200)
     assert.equal(body.platform, 'darwin')
@@ -91,29 +91,29 @@ try {
     assert.match(body.installCmd, /install\.sh/)
   })
 
-  await check('光标开着：点击不带 --no-cursor', async () => {
+  await check('cursor on: click runs without --no-cursor', async () => {
     await tools.desktop_click.execute({ pid: 1, x: 5, y: 6 })
     assert.match(lastArgs(), /^clickat 1 5 6$/)
   })
 
-  await check('点完回报窗口变化', async () => {
+  await check('click reports window changes', async () => {
     const r = await tools.desktop_click.execute({ pid: 1, x: 5, y: 6 })
-    assert.match(r.text, /之后：窗口没变化$/)
+    assert.match(r.text, /After: no window changes$/)
     const w = (pid, windowId, title, app = 'App') => ({ pid, windowId, title, app })
     const { windowChanges } = plugin
-    assert.equal(windowChanges([w(1, 2, 'a')], [w(1, 2, 'a')], 1), '之后：窗口没变化')
-    assert.equal(windowChanges([w(1, 2, 'a')], [w(1, 2, 'a'), w(1, 3, '存储')], 1), '之后：新开了窗口「存储」')
-    assert.equal(windowChanges([w(1, 2, 'a')], [w(1, 2, 'b')], 1), '之后：标题「a」→「b」')
-    assert.equal(windowChanges([w(1, 2, 'a')], [], 1), '之后：窗口「a」不见了（关了或最小化）')
-    assert.equal(windowChanges([], [w(9, 5, '', 'Safari')], 1), '之后：Safari 弹出了窗口（Safari）')
-    assert.equal(windowChanges([w(9, 5, 'x')], [w(9, 5, 'y')], 1), '之后：窗口没变化') // 别的应用改标题不算
+    assert.equal(windowChanges([w(1, 2, 'a')], [w(1, 2, 'a')], 1), 'After: no window changes')
+    assert.equal(windowChanges([w(1, 2, 'a')], [w(1, 2, 'a'), w(1, 3, 'Storage')], 1), 'After: opened a new window "Storage"')
+    assert.equal(windowChanges([w(1, 2, 'a')], [w(1, 2, 'b')], 1), 'After: title "a"→"b"')
+    assert.equal(windowChanges([w(1, 2, 'a')], [], 1), 'After: window "a" disappeared (closed or minimized)')
+    assert.equal(windowChanges([], [w(9, 5, '', 'Safari')], 1), 'After: Safari popped up a window (Safari)')
+    assert.equal(windowChanges([w(9, 5, 'x')], [w(9, 5, 'y')], 1), 'After: no window changes') // title changes in other apps do not count
     const bar = { pid: 9, windowId: 6, title: '', app: 'Google Chrome', width: 123, height: 22 }
-    assert.equal(windowChanges([], [bar], 1), '之后：窗口没变化') // Chrome 左下角的网址条一闪而过，不算
-    assert.equal(windowChanges([{ ...bar, pid: 1 }], [], 1), '之后：窗口没变化')
-    assert.equal(windowChanges([], [{ ...bar, width: 420, height: 260 }], 1), '之后：Google Chrome 弹出了窗口（Google Chrome）') // 没标题但够大：照报
+    assert.equal(windowChanges([], [bar], 1), 'After: no window changes') // Chrome's bottom-left URL bar flashes by and does not count
+    assert.equal(windowChanges([{ ...bar, pid: 1 }], [], 1), 'After: no window changes')
+    assert.equal(windowChanges([], [{ ...bar, width: 420, height: 260 }], 1), 'After: Google Chrome popped up a window (Google Chrome)') // no title but big enough: still reported
   })
 
-  await check('关光标：写进配置，点击带 --no-cursor', async () => {
+  await check('cursor off: written to the config, click runs with --no-cursor', async () => {
     const r = await req('POST', { action: 'cursor', on: false })
     assert.equal(r.body.showCursor, false)
     assert.equal(readConfig().showCursor, false)
@@ -121,33 +121,33 @@ try {
     assert.match(lastArgs(), /--no-cursor/)
   })
 
-  await check('再打开：不再带 --no-cursor', async () => {
+  await check('on again: --no-cursor no longer passed', async () => {
     const r = await req('POST', { action: 'cursor', on: true })
     assert.equal(r.body.showCursor, true)
     await tools.desktop_click.execute({ pid: 1, x: 5, y: 6 })
     assert.doesNotMatch(lastArgs(), /--no-cursor/)
   })
 
-  await check('openSettings 只认两个面板', async () => {
+  await check('openSettings accepts only the two panes', async () => {
     assert.equal((await req('POST', { action: 'openSettings', pane: 'camera' })).status, 400)
   })
 
-  await check('把门：跨站 Origin 拒', async () => {
+  await check('gate: cross-site Origin rejected', async () => {
     assert.equal((await req('GET', undefined, { origin: 'https://evil.example' })).status, 403)
     assert.equal((await req('POST', { action: 'cursor', on: false }, { origin: 'https://evil.example' })).status, 403)
     assert.equal(readConfig().showCursor, true)
   })
 
-  await check('把门：自己的 Origin 放行', async () => {
+  await check('gate: own Origin allowed', async () => {
     assert.equal((await req('GET', undefined, { origin: `http://127.0.0.1:${port}` })).status, 200)
     assert.equal((await req('GET', undefined, { origin: `http://localhost:${port}` })).status, 200)
   })
 
-  await check('把门：Host 不是本机（DNS 重绑定）拒', async () => {
+  await check('gate: non-local Host (DNS rebinding) rejected', async () => {
     assert.equal((await req('GET', undefined, { host: 'evil.example' })).status, 403)
   })
 
-  await check('把门：POST 不是 JSON 拒', async () => {
+  await check('gate: POST that is not JSON rejected', async () => {
     const code = await new Promise((resolve) => {
       const q = http.request({ host: '127.0.0.1', port, path: PANEL_ROUTE, method: 'POST', headers: { 'content-type': 'text/plain' } },
         (res) => { res.resume(); res.on('end', () => resolve(res.statusCode)) })
@@ -156,7 +156,7 @@ try {
     assert.equal(code, 415)
   })
 
-  await check('不认识的 action', async () => {
+  await check('unknown action', async () => {
     assert.equal((await req('POST', { action: 'nuke' })).status, 400)
   })
 } finally {

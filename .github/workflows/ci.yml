@@ -1,6 +1,6 @@
-# 日常检查：推送 / PR 时跑测试；外加每天一次在 macOS 和 Windows 上、最新版和预览版 DSH 里实装实跑（DSH 升级把插件弄坏时会在这里先红）。
-# plugin.env 里写了 TEST_CMD_WINDOWS 的仓库，测试也在 Windows 上跑一遍；写了 E2E_CMD 的仓库，还会在 macOS / Windows / Linux 的真机上跑一遍端到端测试（比如浏览器桥连真 Chrome）。
-# 模板在 dsh-plugins/_ci/，用 _ci/sync.sh 同步进五个仓库；每个仓库的差异只在 .github/plugin.env。
+# Routine checks: tests on push / PR, plus a daily real install-and-boot of the plugin in DSH latest and next on macOS and Windows (the first place to turn red when a DSH upgrade breaks the plugin).
+# Repos whose plugin.env defines TEST_CMD_WINDOWS also run the tests on Windows; repos defining E2E_CMD additionally run end-to-end tests on real macOS / Windows / Linux machines (e.g. the browser bridge driving a real Chrome).
+# The template lives in dsh-plugins/_ci/ and is synced into five repos via _ci/sync.sh; the only per-repo difference is .github/plugin.env.
 name: CI
 
 on:
@@ -84,8 +84,8 @@ jobs:
         with:
           name: package
           path: .pkg
-      # Windows 上现装 DSH（1.4 GB、9 万多个文件）要十几分钟：关掉实时扫描，再按「系统 + 实际装到的版本」缓存装好的 DSH 命令行。
-      # DSH 出新版 → 版本号变了 → 缓存不中、现装新版；脚本自己也会核对版本，对不上就重装。插件本身每次现装。
+      # A fresh DSH install on Windows (1.4 GB, 90k+ files) takes 10+ minutes: turn off real-time scanning, then cache the installed DSH CLI keyed by OS + actually resolved version.
+      # New DSH release → version changes → cache miss → fresh install; the compat script also verifies the version and reinstalls on mismatch. The plugin itself is installed fresh every run.
       - name: Turn off Defender real-time scan
         if: runner.os == 'Windows'
         shell: pwsh
@@ -97,7 +97,7 @@ jobs:
         shell: bash
         run: |
           V=$(npm view "@deepseek-ai/dsh@${{ matrix.dsh }}" version --registry=https://registry.npmjs.org/ | tail -1 | tr -d "'\r") || V=
-          echo "DSH ${{ matrix.dsh }} = ${V:-（没查到，不用缓存）}"
+          echo "DSH ${{ matrix.dsh }} = ${V:-(not found; cache disabled)}"
           echo "version=$V" >> "$GITHUB_OUTPUT"
       - name: Restore DSH from cache
         id: cache
@@ -106,12 +106,12 @@ jobs:
         with:
           path: ${{ runner.temp }}/dsh-cli
           key: dsh-cli-${{ runner.os }}-${{ runner.arch }}-node24-${{ steps.dsh.outputs.version }}
-      # plugin.env 的 PLATFORMS 之外的系统只作参考：失败会在摘要里标出来，但不让整次检查变红
+      # OSes outside PLATFORMS in plugin.env are informational only: failures are flagged in the summary but do not turn the whole check red
       - name: Install and boot in a fresh DSH
         shell: bash
         continue-on-error: ${{ !contains(env.PLATFORMS, runner.os) }}
         run: node .github/dsh-compat.mjs .pkg/*.tgz --dsh ${{ matrix.dsh }} ${{ steps.dsh.outputs.version && '--cli-dir "$RUNNER_TEMP/dsh-cli"' || '' }}
-      # 插件没过也存：DSH 本身装好了就值得留着
+      # Save even if the plugin failed: a DSH CLI that did install is worth keeping
       - name: Save DSH to cache
         if: ${{ !cancelled() && steps.dsh.outputs.version && steps.cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
@@ -136,7 +136,7 @@ jobs:
       - name: Load plugin settings
         shell: bash
         run: grep -vE '^\s*(#|$)' .github/plugin.env >> "$GITHUB_ENV"
-      # 端到端里也要现装 DSH（9 万多个文件）：Windows 的 C 盘很慢（现装 10 分钟，D 盘 1 分半），临时目录挪到 D 盘的 RUNNER_TEMP
+      # E2E also installs DSH fresh (90k+ files): drive C on Windows is slow (10 min vs. 1.5 min on drive D), so the temp dir moves to RUNNER_TEMP on drive D
       - name: Turn off Defender real-time scan, temp dir on drive D
         if: runner.os == 'Windows'
         shell: pwsh

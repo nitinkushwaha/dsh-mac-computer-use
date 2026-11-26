@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * 打包前（npm pack 的 prepack）把引擎 dsh-cu 和光标浮层编成通用程序（Apple 芯片 + Intel，macOS 11 起），
- * 放进 plugin/bin/：插件装上就能用，不用再 clone 仓库、装 Xcode 编译。
+ * Before packing (npm pack's prepack step), build the dsh-cu engine and the cursor overlay into
+ * universal binaries (Apple silicon + Intel, macOS 11+) and drop them into plugin/bin/:
+ * the plugin works right after install, with no repo clone or Xcode build required.
  *
- * 不是 macOS、或没有 swiftc：跳过（插件找不到自带的就退回 ~/.dsh/bin）。
- * 但在 CI 的 Mac 上必须编出来，编不出就让打包失败，免得发出去一个用不了的包。
+ * Not macOS, or no swiftc: skip (the plugin falls back to ~/.dsh/bin when the bundled binary is missing).
+ * But on a CI Mac the binaries must build; a failed build fails the pack, so we never ship a broken package.
  */
 
 import { execFileSync } from 'node:child_process'
@@ -25,15 +26,15 @@ const TARGETS = [
 const run = (cmd, args) => execFileSync(cmd, args, { stdio: ['ignore', 'pipe', 'inherit'], encoding: 'utf8' })
 const has = (cmd) => { try { run('/usr/bin/which', [cmd]); return true } catch { return false } }
 
-// 旧的先清掉：源码改过却没重编的话，宁可不带，也不能带一份对不上的
+// Clear out the old binaries first: if sources changed without a rebuild, better to ship none than a mismatched set
 fs.rmSync(OUT, { recursive: true, force: true })
 
 if (process.platform !== 'darwin' || !has('swiftc')) {
   if (process.platform === 'darwin' && process.env.CI) {
-    console.error('❌ CI 的 Mac 上找不到 swiftc，编不出自带的程序')
+    console.error('❌ swiftc not found on the CI Mac; cannot build the bundled binaries')
     process.exit(1)
   }
-  console.log('跳过：自带程序要在装了 swiftc 的 Mac 上编')
+  console.log('Skipping: bundled binaries must be built on a Mac with swiftc installed')
   process.exit(0)
 }
 
@@ -48,13 +49,13 @@ try {
     })
     const file = path.join(OUT, t.name)
     run('lipo', ['-create', '-output', file, ...slices])
-    // Apple 芯片只跑签过名的程序：合并后重新做一次本地签名
+    // Apple silicon only runs signed binaries: re-sign locally after the merge
     run('codesign', ['--force', '--sign', '-', file])
     fs.chmodSync(file, 0o755)
-    console.log(`✓ ${path.relative(ROOT, file)}（${run('lipo', ['-archs', file]).trim()}）`)
+    console.log(`✓ ${path.relative(ROOT, file)} (${run('lipo', ['-archs', file]).trim()})`)
   }
   const proto = run(path.join(OUT, 'dsh-cu'), ['version']).trim()
-  console.log(`✓ 引擎协议 ${proto}`)
+  console.log(`✓ engine protocol ${proto}`)
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true })
 }

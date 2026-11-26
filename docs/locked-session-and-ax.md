@@ -52,8 +52,8 @@ get_window_state -> elements: 0    degraded: True
 
 # after unlocking (same daemon, same window id, no restart)
 get_window_state -> elements: 154  degraded: None
-  0 AXWindow '计算器'
-  1 AXButton '删除'
+  0 AXWindow 'Calculator'
+  1 AXButton 'Delete'
   5 AXButton '7'
 ```
 

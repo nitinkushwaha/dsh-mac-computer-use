@@ -1,14 +1,14 @@
 /**
- * dsh-mac-computer-use 的网页端：DSH「插件」页里我们这张卡的设置页。
+ * Web client for dsh-mac-computer-use: the settings page for our card on DSH's "Plugins" page.
  *
- *   状态：能不能用、看得到几个窗口
- *   清单：命令行工具、屏幕录制权限、辅助功能权限、光标浮层 —— 缺哪个就给哪个的按钮
- *   开关：屏幕上显示操作光标
+ *   Status: whether it works, how many windows are visible
+ *   Checklist: command-line tool, Screen Recording permission, Accessibility permission, cursor overlay — each missing item gets its own button
+ *   Switch: show the action cursor on screen
  *
- * 数据全走插件自己挂在 DSH webServer 上的路由（plugin/panel.js），每 2.5 秒刷一次。
- * 走官方客户端插件机制：window.__ModuleLoader__.load({ id, factory })，factory 里 apply(ctx)
- * → 注册到 plugins.bundle.config（包详情页）和 plugins.row.config（行详情页）两个 keyed slot。
- * 拿不到 react 或 DSH 的组件就安静退出 / 用最朴素的替身，别把宿主页面搞崩。
+ * All data goes through the route the plugin mounts on DSH's webServer (plugin/panel.js), refreshed every 2.5 seconds.
+ * Built on the official client plugin mechanism: window.__ModuleLoader__.load({ id, factory }), where factory runs apply(ctx)
+ * → registered into the two keyed slots plugins.bundle.config (package detail page) and plugins.row.config (row detail page).
+ * If react or the DSH components are unavailable, exit quietly / fall back to the plainest stand-in; never crash the host page.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-mac-computer-use',
@@ -33,50 +33,50 @@ window.__ModuleLoader__.load({
     const ROUTE = '/dsh-mac-computer-use/panel'
     const REPO = 'https://github.com/OrderG-X/dsh-mac-computer-use'
 
-    // 占位符用 %x：不跟 DSH 自己的 {name} 插值撞
+    // placeholders use %x: avoids colliding with DSH's own {name} interpolation
     const zh = {
-      checking: '正在检查…',
-      ready: '可以用了',
-      needsPerm: '还差系统权限',
-      notInstalled: '还没装好',
-      unsupported: '只支持 macOS',
-      windows: '能看到 %n 个窗口',
-      windowsUnknown: '命令行工具跑不起来，看不到窗口',
-      summaryOn: '可以用了 · 能看到 %n 个窗口',
-      summaryPerm: '缺少系统权限，点开看怎么开',
-      summaryOff: '找不到命令行工具，点开看怎么办',
-      binTitle: '命令行工具 dsh-cu',
-      binOk: '已装好',
-      binMissing: '找不到插件自带的程序。先在 DSH 里把插件更新到最新版或重装一次；还不行，就在「终端」里运行下面这条自己编译（要先装 Xcode 命令行工具：xcode-select --install）：',
-      srcBundled: '插件自带',
+      checking: 'Checking…',
+      ready: 'Ready',
+      needsPerm: 'Missing system permissions',
+      notInstalled: 'Not installed yet',
+      unsupported: 'macOS only',
+      windows: 'Can see %n window(s)',
+      windowsUnknown: 'The command-line tool did not run, so no windows are visible',
+      summaryOn: 'Ready · can see %n window(s)',
+      summaryPerm: 'Missing system permissions — open for steps',
+      summaryOff: 'Command-line tool not found — open for what to do',
+      binTitle: 'Command-line tool dsh-cu',
+      binOk: 'Installed',
+      binMissing: 'The program bundled with the plugin is missing. Update the plugin to the latest version in DSH, or reinstall it. If that does not help, build it yourself by running this in Terminal (needs Xcode Command Line Tools first: xcode-select --install):',
+      srcBundled: 'bundled with the plugin',
       srcInstalled: '~/.dsh/bin',
-      srcDev: '开发目录',
+      srcDev: 'dev folder',
       srcEnv: 'DSH_CU_BIN',
-      copyInstall: '复制安装命令',
-      copied: '安装命令已复制，到「终端」里粘贴回车，装完回来这里会自动更新',
-      binOld: '可以更新',
-      binOutdated: '新版引擎截图更准：窗口被别的窗口挡住时，给元素编号、按文字找也能看到窗口本身。在「终端」里运行下面这条更新（现在的也能用）：',
-      copyUpdate: '复制更新命令',
-      updateCopied: '更新命令已复制，到「终端」里粘贴回车，装完回来这里会自动更新',
-      screenTitle: '屏幕录制权限',
-      screenHint: '截图、按文字找按钮都要用。',
-      axTitle: '辅助功能权限',
-      axHint: '点击、输入、按键、滚动、拖拽和按编号点都要用；没开的话这些操作会直接报错（系统会把它们丢掉）。',
-      permOk: '已开',
-      permMissing: '没开',
-      permUnknown: '查不出来',
-      openSettings: '打开系统设置',
-      settingsOpened: '已打开系统设置：在列表里打开 DeepSeek Harness 的开关。屏幕录制改完要重启 DSH 才生效。',
-      overlayTitle: '光标浮层',
-      overlayRunning: '正在显示',
-      overlayIdle: '已装，操作时自动出现',
-      overlayMissing: '没装：看不到光标，不影响操作（装命令行工具时会一起装）',
-      showCursor: '屏幕上显示操作光标',
-      showCursorHint: '关掉只是不画光标，点击、输入照做。',
-      plugin: '插件 v%v',
-      guide: '使用说明',
-      failed: '操作没成功：%e',
-      unreachable: '读不到插件状态，重启 DSH 后再试',
+      copyInstall: 'Copy install command',
+      copied: 'Install command copied. Paste it in Terminal; this page updates by itself once it is done',
+      binOld: 'Update available',
+      binOutdated: 'The newer engine captures windows more accurately: numbering elements and finding text also see the window itself when another window covers it. Run this in Terminal to update (the current one still works):',
+      copyUpdate: 'Copy update command',
+      updateCopied: 'Update command copied. Paste it in Terminal; this page updates by itself once it is done',
+      screenTitle: 'Screen Recording permission',
+      screenHint: 'Needed for screenshots and finding buttons by their text.',
+      axTitle: 'Accessibility permission',
+      axHint: 'Needed for clicking, typing, keys, scrolling, dragging and clicking by number; without it these fail with an error (macOS drops them).',
+      permOk: 'On',
+      permMissing: 'Off',
+      permUnknown: 'Unknown',
+      openSettings: 'Open System Settings',
+      settingsOpened: 'Opened System Settings: turn on DeepSeek Harness in the list. Screen Recording changes need a DSH restart.',
+      overlayTitle: 'Cursor overlay',
+      overlayRunning: 'Showing',
+      overlayIdle: 'Installed, appears while working',
+      overlayMissing: 'Not installed: no visible cursor, actions still work (installed together with the command-line tool)',
+      showCursor: 'Show the action cursor on screen',
+      showCursorHint: 'Off only hides the cursor; clicks and typing still happen.',
+      plugin: 'Plugin v%v',
+      guide: 'Guide',
+      failed: 'That did not work: %e',
+      unreachable: 'Could not read the plugin status; restart DSH and try again',
     }
     const en = {
       checking: 'Checking…',
@@ -160,7 +160,7 @@ window.__ModuleLoader__.load({
       document.head.appendChild(tag)
     }
 
-    // ── DSH 组件，拿不到就用朴素替身 ────────────────────────────────────────
+    // ── DSH components, plain stand-ins when unavailable ────────────────────
     function Toggle({ checked, disabled, label, onChange }) {
       if (UI.Switch) return h('span', { className: 'dcu-switch' }, h(UI.Switch, { checked, disabled, label, onChange }))
       return h('input', { className: 'dcu-switch', type: 'checkbox', role: 'switch', 'aria-label': label, checked, disabled, onChange: (e) => onChange(e.target.checked) })
@@ -170,7 +170,7 @@ window.__ModuleLoader__.load({
       return h('button', { type: 'button', className: 'dcu-btn', disabled, onClick }, children)
     }
 
-    // ── 数据 ──────────────────────────────────────────────────────────────
+    // ── Data ──────────────────────────────────────────────────────────────
     async function fetchState(action) {
       const res = await fetch(ROUTE, action
         ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(action), credentials: 'same-origin' }
@@ -179,7 +179,7 @@ window.__ModuleLoader__.load({
       return res.json()
     }
 
-    /** 2.5 秒刷一次；页面藏起来时不刷。 */
+    /** Refresh every 2.5 seconds; skip while the page is hidden. */
     function useDesktopState() {
       const [state, setState] = useState(null)
       const [error, setError] = useState('')
@@ -217,7 +217,7 @@ window.__ModuleLoader__.load({
       return 'on'
     }
 
-    // ── 概要（行卡片上的一句话）────────────────────────────────────────────
+    // ── Summary (the one-liner on the row card) ───────────────────────────
     function Summary({ t }) {
       const { state } = useDesktopState()
       const p = phaseOf(state)
@@ -228,7 +228,7 @@ window.__ModuleLoader__.load({
       return fmt(t('summaryOn'), { n: state.windows })
     }
 
-    // ── 设置页 ────────────────────────────────────────────────────────────
+    // ── Settings page ─────────────────────────────────────────────────────
     function Page({ t }) {
       const { state, error, act } = useDesktopState()
       const [busy, setBusy] = useState(false)
@@ -258,7 +258,7 @@ window.__ModuleLoader__.load({
               ? h('div', { className: 'dcu-sub' }, state.windows == null ? t('windowsUnknown') : fmt(t('windows'), { n: state.windows }))
               : null)))
 
-      // 一行清单：状态点 + 标题 + 说明 + 右侧按钮
+      // one checklist row: status dot + title + note + button on the right
       const item = (key, dot, title, sub, extra, button) => h('div', { key, className: 'dcu-row' },
         h('span', { className: 'dcu-dot', 'data-s': dot }),
         h('div', { className: 'dcu-main' },

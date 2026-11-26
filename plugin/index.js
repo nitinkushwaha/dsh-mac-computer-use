@@ -1,18 +1,18 @@
 /**
- * dsh-mac-computer-use —— 给 DSH 一组 Mac 桌面操作工具（视觉优先）
+ * dsh-mac-computer-use — gives DSH a set of Mac desktop-control tools (visual-first)
  *
- * 为什么不用 dsh-computer-use / cua-driver：那套依赖 macOS 无障碍树（AX），
- * 而这台机器上第三方二进制拿不到 AXWindow（锁屏时尤其明显）。这里改走**视觉路线**：
+ * Why not dsh-computer-use / cua-driver: that stack depends on the macOS accessibility tree (AX),
+ * and on this machine third-party binaries cannot get AXWindow (most obvious while the screen is locked). This plugin takes the **visual route** instead:
  *
- *   看窗口  → CGWindowList（不需要任何权限）
- *   看内容  → screencapture（DSH 已有屏幕录制权限）
- *   操作    → CGEvent 投递给目标进程（不移动真实鼠标、不抢前台）
+ *   see windows  → CGWindowList (needs no permission at all)
+ *   see content  → screencapture (DSH already holds the Screen Recording permission)
+ *   act          → CGEvent delivered to the target process (doesn't move your real mouse, doesn't steal focus)
  *
- * 这正是 Codex 那种 computer use 的做法，也是目前这台机器上唯一确定能走通的路。
+ * This is exactly the Codex-style computer-use approach, and currently the only route proven to work on this machine.
  *
- * 底层引擎是 dsh-cu（Swift 单文件命令行，源码在仓库 tools/）。发版时编好放进安装包的 bin/，装上就能用；
- * 也可以用 install.sh 自己编到 ~/.dsh/bin/。
- * 本机环境（命令行在哪、权限、用户设置）在 setup.js；DSH 设置页的后端在 panel.js、前端在 client.js。
+ * The underlying engine is dsh-cu (a single-file Swift CLI, source in the repo's tools/). Releases ship it prebuilt in the package's bin/, ready to use right after install;
+ * you can also use install.sh to build it into ~/.dsh/bin/ yourself.
+ * The local environment (where the CLI lives, permissions, user settings) lives in setup.js; the DSH settings panel has its backend in panel.js and its front end in client.js.
  */
 
 import { spawn, execFile, execFileSync } from 'node:child_process'
@@ -37,17 +37,17 @@ function cuBin() {
   return bin.path
 }
 
-// ── 系统级光标浮层 ─────────────────────────────────────────────────────────
-// 用户想看得见操作时，屏幕上得有个光标在动。浮层是独立的 NSPanel 进程：
-// 不抢前台、点击穿透、永远置顶。这里按需拉起 —— 第一次要动桌面时才起，
-// 不需要开机常驻，用户零操作。DSH 设置页里关掉「显示光标」就不起、也不让命令行去起。
-// 浮层闲 60 秒会自己退出，所以每次都探一下：FIFO 能以非阻塞方式打开 = 有读者 = 浮层活着。
+// ── System-wide cursor overlay ─────────────────────────────────────────────
+// When the user wants to see the actions, something has to move on screen. The overlay is a separate NSPanel process:
+// no focus stealing, click-through, always on top. Started here on demand — only when a desktop action first needs it,
+// no login daemon needed, zero user effort. Turning "show cursor" off in the DSH settings panel keeps it from starting, and the CLI is not told to start it either.
+// The overlay quits by itself after 60 idle seconds, so probe every time: if the FIFO opens non-blocking there is a reader = the overlay is alive.
 
-// 本用户私有临时目录（0700）下，别的账号占不了也读不到；dsh-cu 和浮层用同一个算法（confstr DARWIN_USER_TEMP_DIR）
+// Under the user's private temp dir (0700): other accounts can neither squat it nor read it; dsh-cu and the overlay share the same algorithm (confstr DARWIN_USER_TEMP_DIR)
 const FIFO = (() => { try { return path.join(execFileSync('/usr/bin/getconf', ['DARWIN_USER_TEMP_DIR'], { encoding: 'utf8' }).trim(), 'dsh-cursor.fifo') } catch { return path.join(os.tmpdir(), 'dsh-cursor.fifo') } })()
-// 浮层拉不起来（比如二进制坏了）就歇 5 分钟再试，别让每次桌面操作都白等
+// If the overlay cannot be started (e.g. a broken binary), back off for 5 minutes so desktop actions don't wait in vain every time
 let cursorFailedAt = 0
-// 正在拉起浮层的那一次：并发的工具调用一起等它，别起两个
+// The in-flight overlay start: concurrent tool calls await it together instead of starting two
 let cursorStarting = null
 
 const cursorOn = () => readConfig().showCursor !== false
@@ -55,12 +55,12 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 function fifoOpen() {
   try {
-    if (!fs.statSync(FIFO).isFIFO()) return -1          // 残留的普通文件别往里写
+    if (!fs.statSync(FIFO).isFIFO()) return -1          // never write into a leftover regular file
     return fs.openSync(FIFO, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK)
-  } catch { return -1 }                                  // 没文件 / 没读者（ENXIO）
+  } catch { return -1 }                                  // no file / no reader (ENXIO)
 }
 
-/** 只认当前账号的浮层：别的账号开着浮层不算（否则每次操作都白等它的 FIFO） */
+/** Only the current account's overlay counts: one run by another account does not (otherwise every action would wait on that FIFO in vain) */
 function overlayRunning() {
   return new Promise((resolve) => {
     if (typeof process.getuid !== 'function') return resolve(false)
@@ -68,7 +68,7 @@ function overlayRunning() {
   })
 }
 
-/** 异步等浮层就绪：DSH 宿主是单线程，绝不能同步睡（以前用 Atomics.wait，会把整个 DSH 卡住最多 2 秒） */
+/** Wait for the overlay to be ready asynchronously: the DSH host is single-threaded and must never sleep synchronously (Atomics.wait used to freeze the whole of DSH for up to 2 seconds) */
 function ensureCursor() {
   if (!cursorOn()) return Promise.resolve()
   if (!cursorStarting) cursorStarting = startCursor().finally(() => { cursorStarting = null })
@@ -78,39 +78,39 @@ function ensureCursor() {
 async function startCursor() {
   const fd = fifoOpen()
   if (fd >= 0) { fs.closeSync(fd); return }
-  // 进程在、FIFO 还没好 = 刚起（刚装好的二进制第一次启动 macOS 要验一下，会慢一点）：等它，别再起第二个
+  // process alive but FIFO not ready = just started (the first launch of a fresh binary triggers a macOS verification, a bit slower): wait for it instead of starting a second one
   const running = await overlayRunning()
   if (!running) {
     if (Date.now() - cursorFailedAt < 5 * 60_000) return
     try {
       fs.accessSync(OVERLAY, fs.constants.X_OK)
-      // FIFO 明着传：旧版浮层默认还是 /tmp 下那个公用路径
+      // Pass the FIFO explicitly: older overlays still default to the shared /tmp path
       const child = spawn(OVERLAY, ['--fifo', FIFO], { detached: true, stdio: 'ignore' })
       child.unref()
     } catch (e) {
       cursorFailedAt = Date.now()
-      trace(`光标浮层起不来: ${e && e.message}（不影响操作，只是看不见光标；5 分钟后再试）`)
+      trace(`cursor overlay failed to start: ${e && e.message} (actions unaffected, the cursor is just invisible; retrying in 5 minutes)`)
       return
     }
   }
-  // 等浮层把 FIFO 读端打开（最多 2 秒），否则这一次的光标指令会落空
+  // Wait for the overlay to open the FIFO read end (up to 2 seconds), otherwise this round of cursor commands is lost
   for (let i = 0; i < 40; i++) {
     await sleep(50)
     const f = fifoOpen()
     if (f >= 0) {
       fs.closeSync(f)
       cursorFailedAt = 0
-      if (!running) trace('已拉起光标浮层')
+      if (!running) trace('cursor overlay started')
       return
     }
   }
   if (!(await overlayRunning())) {
     cursorFailedAt = Date.now()
-    trace('光标浮层起不来：拉起后 2 秒内没见到它（不影响操作，只是看不见光标；5 分钟后再试）')
+    trace('cursor overlay failed to start: not seen within 2 seconds of launch (actions unaffected, the cursor is just invisible; retrying in 5 minutes)')
   }
 }
 
-/** 给浮层发几行指令（move / label / click …）。浮层没在跑就算了，绝不拖慢操作。 */
+/** Send a few commands to the overlay (move / label / click …). Skipped when the overlay is not running; never slows an action down. */
 function cursorSay(...cmds) {
   if (!cursorOn()) return
   const fd = fifoOpen()
@@ -119,24 +119,24 @@ function cursorSay(...cmds) {
   finally { try { fs.closeSync(fd) } catch {} }
 }
 
-/** 名牌上的短文字 */
+/** Short text for the cursor name tag */
 const short = (s, n = 14) => {
   const t = String(s ?? '').replace(/\s+/g, ' ').trim()
   return t.length > n ? t.slice(0, n - 1) + '…' : t
 }
 
-/** 输入的内容像不像密码：没有空格、没有中日韩文字的一串就不往屏幕上写 */
+/** Does the text being typed look like a password: a run with no spaces and no CJK characters is not written onto the screen */
 const typedLabel = (text) => {
   const t = String(text ?? '')
-  return /\s|[\u3000-\u9fff\uac00-\ud7af]/.test(t) ? `输入「${short(t, 12)}」` : `输入 ${t.length} 个字符`
+  return /\s|[\u3000-\u9fff\uac00-\ud7af]/.test(t) ? `typing "${short(t, 12)}"` : `typing ${t.length} characters`
 }
 
 /**
- * 跟引擎约定的协议版本（tools/dsh-cu.swift 的 ENGINE_PROTOCOL）。插件自带的引擎总是对得上；用 DSH_CU_BIN、开发目录里的引擎时
- * 两边可能对不上：旧引擎会把新参数当成输出路径、按旧单位滚动。所以第一次用引擎先核对，对不上就什么都不跑。
+ * Protocol version agreed with the engine (ENGINE_PROTOCOL in tools/dsh-cu.swift). The engine bundled with the plugin always matches; with DSH_CU_BIN or an engine from a dev folder
+ * the two sides may disagree: an old engine treats new arguments as the output path and scrolls in the old units. So verify on first use, and run nothing when it does not match.
  */
 const ENGINE_PROTOCOL = '2'
-let engineOk = ''                                         // 核对通过的引擎（路径 + 修改时间 + 大小），重装后自动重新核对
+let engineOk = ''                                         // engine that passed verification (path + mtime + size); re-verified automatically after a reinstall
 
 function engineKey(bin) {
   try { const st = fs.statSync(bin); return `${bin}:${st.mtimeMs}:${st.size}` } catch { return bin }
@@ -148,13 +148,13 @@ async function checkEngine(bin) {
   const got = await exec(bin, ['version'], 10000).catch(() => '')
   if (got !== ENGINE_PROTOCOL) {
     throw new Error(
-      `命令行引擎版本不对（插件要 ${ENGINE_PROTOCOL}，引擎${got ? `是 ${got.slice(0, 20)}` : '太旧、没有 version 命令'}），这次什么都没做。` +
-      `请在 dsh-mac-computer-use 仓库根目录重跑 ./install.sh，再重试（没有仓库就重新装：${INSTALL_CMD}）`)
+      `wrong CLI engine version (the plugin needs ${ENGINE_PROTOCOL}, the engine ${got ? `is ${got.slice(0, 20)}` : 'is too old and has no version command'}); nothing was run this time.` +
+      `Re-run ./install.sh at the root of the dsh-mac-computer-use repo, then retry (no repo? install fresh: ${INSTALL_CMD})`)
   }
   engineOk = key
 }
 
-/** 协议号不变的引擎增强（dsh-cu features）；旧引擎没这个命令就是空集合。按引擎文件缓存，重装后重新问 */
+/** Engine features that keep the protocol version (dsh-cu features); an empty set when an old engine lacks the command. Cached per engine file, re-queried after a reinstall */
 let featureCache = { key: '', set: new Set() }
 async function engineFeatures() {
   const bin = cuBin()
@@ -166,7 +166,7 @@ async function engineFeatures() {
   return featureCache.set
 }
 
-/** 跑系统自带的小工具（screencapture / sips），不卡住 DSH */
+/** Run the system's own little helpers (screencapture / sips) without blocking DSH */
 function execFileP(cmd, args, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     execFile(cmd, args, { timeout: timeoutMs }, (err, out) => (err ? reject(err) : resolve(String(out))))
@@ -174,8 +174,8 @@ function execFileP(cmd, args, timeoutMs = 15000) {
 }
 
 /**
- * 旧引擎（没重跑 install.sh，没有 shot --window）时插件自己截窗口本身：screencapture -l 窗口号，缩到「点」尺寸，
- * 坐标换算跟引擎一样「1 像素 = 1 点」。截不到、或出图比例对不上（同引擎的 fits）回 null，调用方退回按屏幕区域截
+ * On an old engine (install.sh not re-run, no shot --window) the plugin captures the window itself: screencapture -l <window id>, resized to the "point" size,
+ * with the same coordinate mapping as the engine ("1 pixel = 1 point"). Returns null when capture fails or the image ratio is off (same fits rule as the engine); the caller then falls back to a screen-area capture
  */
 async function shootWindow(w, file) {
   try {
@@ -204,21 +204,21 @@ function exec(bin, args, timeoutMs) {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] })
     let out = '', err = ''
-    const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch {} ; reject(new Error(`dsh-cu 超时（${timeoutMs}ms）`)) }, timeoutMs)
+    const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch {} ; reject(new Error(`dsh-cu timed out (${timeoutMs}ms)`)) }, timeoutMs)
     child.stdout.on('data', (d) => { out += d })
     child.stderr.on('data', (d) => { err += d })
-    child.on('error', (e) => { clearTimeout(timer); reject(new Error(`起不来 dsh-cu: ${e.message}`)) })
+    child.on('error', (e) => { clearTimeout(timer); reject(new Error(`failed to start dsh-cu: ${e.message}`)) })
     child.on('close', (code) => {
       clearTimeout(timer)
       if (code === 0) return resolve(out.trim())
-      const e = new Error(err.trim() || out.trim() || `dsh-cu 退出码 ${code}`)
-      e.exitCode = code                                   // 调用方按退出码区分（find 的 2 = 没找到）
+      const e = new Error(err.trim() || out.trim() || `dsh-cu exited with code ${code}`)
+      e.exitCode = code                                   // callers branch on the exit code (find's 2 = not found)
       reject(e)
     })
   })
 }
 
-// ── 工具外壳（不 import 任何 @deepseek-ai/*，形状按 dsh-tools 的产出手搓）──────
+// ── Tool shell (imports nothing from @deepseek-ai/*, shape hand-rolled to match dsh-tools output) ───────
 
 function specToJsonSchema(spec) {
   const properties = {}
@@ -252,10 +252,10 @@ const textOutput = {
 
 const present = (title) => (args) => ({ card: 'generic', title, kind: 'other', rawInput: args })
 
-/** render 是同步的，execute 里把附件引用存在这里，render 用 token 取回 */
+/** render is synchronous; execute stashes attachment references here and render fetches them back by token */
 const shotRefs = new Map()
 
-/** OCR 找文字 → 屏幕坐标（dsh-cu find 的输出是 "序号\tx,y\t置信度\t文字"） */
+/** OCR-find text → screen coordinates (dsh-cu find outputs "index\tx,y\tconfidence\ttext") */
 async function findText(text, pid) {
   const a = ['find', text]
   if (pid) a.push('--pid', String(pid))
@@ -263,44 +263,44 @@ async function findText(text, pid) {
   try {
     out = await run(a, 60000)
   } catch (e) {
-    // 只有退出码 2 才是「没找到」；没装、超时、没权限、截图失败都原样报，别都说成没找到
+    // only exit code 2 means "not found"; a missing binary, a timeout, a missing permission or a failed screenshot is reported as-is — never dressed up as "not found"
     if (e.exitCode === 2) {
-      throw new Error(`没在屏幕上找到「${text}」${pid ? `（窗口 pid=${pid}）` : ''}。先 desktop_screenshot 看一眼现在是什么界面`)
+      throw new Error(`did not find "${text}" on screen${pid ? ` (window pid=${pid})` : ''}. Take a desktop_screenshot first to see what is on screen right now`)
     }
-    throw new Error(`OCR 找字没做成：${e.message}`)
+    throw new Error(`OCR text search failed: ${e.message}`)
   }
   const line = out.split('\n')[0]
   const [idx, xy, conf, ...rest] = line.split('\t')
   const [x, y] = (xy || '').split(',').map(Number)
-  if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`OCR 结果解析不了: ${line}`)
+  if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error(`could not parse the OCR result: ${line}`)
   return { x, y, conf: conf || '?', text: rest.join('\t') || text }
 }
 
-// 「x,y w×h」：副屏在主屏左边 / 上边时 x、y 是负数
+// "x,y w×h": x and y go negative when a secondary display sits to the left of / above the main one
 const RECT_RE = /(-?\d+),(-?\d+) (\d+)×(\d+)/
 
-/** dsh-cu shot 输出的第二行「rect\tx,y w×h」：截图覆盖的屏幕范围（点） */
+/** Second line of dsh-cu shot output, "rect\tx,y w×h": the screen area (in points) the screenshot covers */
 function parseRect(raw) {
   const m = RECT_RE.exec(raw.split('\n').find((l) => l.startsWith('rect\t')) || '')
   return m ? { x: Number(m[1]), y: Number(m[2]), width: Number(m[3]), height: Number(m[4]) } : null
 }
 
-/** 告诉模型图上坐标怎么换成点击坐标。图按「点」出，k = 被 maxWidth 缩小的倍数 */
+/** Tells the model how to convert image coordinates into click coordinates. Images come out in "points"; k = the factor maxWidth shrank the image by */
 function mapping(rect, k = 1) {
-  if (k === 1 && rect.x === 0 && rect.y === 0) return '图上坐标就是屏幕坐标，可以直接给 desktop_click。'
+  if (k === 1 && rect.x === 0 && rect.y === 0) return 'Image coordinates are screen coordinates and can be passed straight to desktop_click.'
   const f = (o, v) => (k === 1 ? `${o} + ${v}` : `${o} + ${v}×${Number(k.toFixed(3))}`)
-  return `图上 (u, v) 对应屏幕坐标 (${f(rect.x, 'u')}, ${f(rect.y, 'v')})，换算好再给 desktop_click。`
+  return `Image (u, v) maps to screen coordinates (${f(rect.x, 'u')}, ${f(rect.y, 'v')}); convert before passing to desktop_click.`
 }
 
-/** 截图临时文件放这里：用户自己的临时目录下新建的 0700 子目录（别的账号读不到），用完整个删掉 */
+/** Screenshot temp files go here: a fresh 0700 subdirectory under the user's own temp dir (unreadable by other accounts), deleted whole afterwards */
 const privateDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-cu-'))
 const removeDir = (dir) => { try { fs.rmSync(dir, { recursive: true, force: true }) } catch {} }
 
-/** 正整数参数（插件手搓的 defineTool 不做入参校验，这里自己把关）；没给回 undefined */
+/** Positive-integer parameters (the hand-rolled defineTool does no input validation, so gatekeep here); returns undefined when not given */
 function positiveInt(value, name) {
   if (value === undefined || value === null) return undefined
   const n = Number(value)
-  if (!Number.isInteger(n) || n <= 0) throw new Error(`${name} 要是正整数，收到的是 ${JSON.stringify(value)}`)
+  if (!Number.isInteger(n) || n <= 0) throw new Error(`${name} must be a positive integer, got ${JSON.stringify(value)}`)
   return n
 }
 
@@ -316,40 +316,40 @@ function parseWindows(raw) {
   })
 }
 
-const q = (t) => `「${String(t || '').slice(0, 40)}」`
+const q = (t) => `"${String(t || '').slice(0, 40)}"`
 
 /**
- * 动作前后两份窗口清单 → 一句话说这一下让窗口变了什么（新开、不见、标题变了、别的应用弹出窗口）。
- * 只看窗口，不看窗口里的内容；内容要看就用 desktop_observe。
+ * Two window lists, before and after an action → one line saying what the action did to the windows (new window, gone, title changed, another app popped up a window).
+ * Looks at windows only, not their contents; use desktop_observe for contents.
  */
 export function windowChanges(before, after, pid) {
   const old = new Map(before.map((w) => [w.windowId, w]))
   const now = new Map(after.map((w) => [w.windowId, w]))
-  const name = (w) => (w.title ? q(w.title) : `（${w.app}）`)
-  // 没标题的小条（Chrome 左下角的网址条、提示气泡）一闪就没，不算窗口变化
+  const name = (w) => (w.title ? q(w.title) : `(${w.app})`)
+  // tiny untitled strips (Chrome's bottom-left URL bar, tooltip bubbles) flash by in an instant and do not count as window changes
   const blip = (w) => !w.title && w.height > 0 && w.height < 60
   const out = []
   for (const w of after) {
     const o = old.get(w.windowId)
     if (!o && blip(w)) continue
-    if (!o) out.push(w.pid === pid ? `新开了窗口${name(w)}` : `${w.app} 弹出了窗口${name(w)}`)
-    else if (o.title !== w.title && w.pid === pid) out.push(`标题${q(o.title)}→${q(w.title)}`)
+    if (!o) out.push(w.pid === pid ? `opened a new window ${name(w)}` : `${w.app} popped up a window ${name(w)}`)
+    else if (o.title !== w.title && w.pid === pid) out.push(`title ${q(o.title)}→${q(w.title)}`)
   }
-  for (const w of before) if (w.pid === pid && !now.has(w.windowId) && !blip(w)) out.push(`窗口${name(w)}不见了（关了或最小化）`)
-  if (!out.length) return '之后：窗口没变化'
-  return `之后：${out.slice(0, 5).join('；')}${out.length > 5 ? ` 等 ${out.length} 处` : ''}`
+  for (const w of before) if (w.pid === pid && !now.has(w.windowId) && !blip(w)) out.push(`window ${name(w)} disappeared (closed or minimized)`)
+  if (!out.length) return 'After: no window changes'
+  return `After: ${out.slice(0, 5).join('; ')}${out.length > 5 ? ` (+${out.length} in total)` : ''}`
 }
 
 export function apply(ctx, config) {
-  trace('apply 被调用')
+  trace('apply called')
 
   const snapWindows = () => run(['winlist'], 5000).then(parseWindows, () => null)
-  /** 做一个动作，顺带回报窗口变化：模型不用每次再截图确认「点上没有、弹没弹窗」 */
+  /** Run one action and report window changes with it: the model does not need another screenshot to confirm "the click landed / a dialog popped up" */
   async function report(pid, act) {
     const before = await snapWindows()
     const text = await act()
     if (!before) return text
-    await sleep(400) // 等界面反应过来
+    await sleep(400) // give the UI a moment to react
     const after = await snapWindows()
     return after ? `${text}\n${windowChanges(before, after, Number(pid))}` : text
   }
@@ -358,10 +358,10 @@ export function apply(ctx, config) {
     defineTool({
       name: 'desktop_windows',
       description:
-        '列出当前屏幕上所有可见窗口，含 pid、窗口 id、应用名、标题和**屏幕坐标**（左上角 x,y 和宽高）。' +
-        '桌面操作前先用它拿到目标和坐标。不依赖无障碍权限，始终可用。',
+        'Lists all visible windows on the current screen, with pid, window id, app name, title and **screen coordinates** (top-left x,y plus width and height). ' +
+        'Get your target and its coordinates here before any desktop action. Needs no accessibility permission and always works.',
       parameters: {
-        filter: { type: 'string', description: '可选：按应用名或标题过滤（不区分大小写）' },
+        filter: { type: 'string', description: 'Optional: filter by app name or title (case-insensitive)' },
       },
       output: textOutput,
       presentCall: present('Desktop windows'),
@@ -369,7 +369,7 @@ export function apply(ctx, config) {
         const wins = parseWindows(await run(['winlist']))
         const f = (args.filter || '').toLowerCase()
         const list = f ? wins.filter((w) => w.app.toLowerCase().includes(f) || w.title.toLowerCase().includes(f)) : wins
-        if (!list.length) return { text: '(没有匹配的窗口)' }
+        if (!list.length) return { text: '(no matching windows)' }
         return {
           text: list.map((w) =>
             `pid=${w.pid} win=${w.windowId} ${w.app}${w.title ? ` «${w.title.slice(0, 40)}»` : ''} @(${w.x},${w.y}) ${w.width}×${w.height}`
@@ -381,12 +381,12 @@ export function apply(ctx, config) {
     defineTool({
       name: 'desktop_screenshot',
       description:
-        '给屏幕或某个窗口截图，图片直接返回给你看。给了 pid 就只截那个应用最前面的窗口（在哪块屏都行，被别的窗口挡住也截得到它本身），' +
-        '否则截主显示器。图按「点」出（1 像素 = 1 点）：全屏图上的坐标就是屏幕坐标；窗口图的换算方式写在返回文字里。' +
-        '**先截图、看清按钮位置，再用 desktop_click 按坐标点** —— 这是推荐的工作方式。',
+        'Screenshots the screen or a single window and returns the image directly. With a pid, captures only that app\'s frontmost window (on any display, even covered by other windows — the window itself is still captured), ' +
+        'otherwise captures the main display. Images come out in "points" (1 pixel = 1 point): on a full-screen image the coordinates are screen coordinates; the conversion for a window image is stated in the returned text. ' +
+        '**Screenshot first, locate the button, then desktop_click by coordinate** — that is the recommended workflow.',
       parameters: {
-        pid: { type: 'integer', description: '可选：只截这个进程的窗口' },
-        maxWidth: { type: 'integer', description: '可选：缩小到多少像素宽（默认不缩；缩了以后坐标要按返回文字里的倍数换算）' },
+        pid: { type: 'integer', description: 'Optional: capture only this process\'s window' },
+        maxWidth: { type: 'integer', description: 'Optional: shrink to this many pixels wide (no shrinking by default; once shrunk, convert coordinates by the factor stated in the returned text)' },
       },
       output: {
         schema: {
@@ -409,26 +409,26 @@ export function apply(ctx, config) {
         let keep = false
         try {
           const a = ['shot']
-          let target = '主显示器'
+          let target = 'main display'
           let rect = null
           if (args.pid) {
             const wins = parseWindows(await run(['winlist'])).filter((w) => w.pid === Number(args.pid))
-            if (!wins.length) throw new Error(`pid ${args.pid} 没有可见窗口（应用没开窗口、窗口最小化了，或在别的桌面空间）`)
+            if (!wins.length) throw new Error(`pid ${args.pid} has no visible window (the app has no window open, the window is minimized, or it lives in another desktop space)`)
             const w = wins[0]
             target = `${w.app} «${w.title}»`
             if ((await engineFeatures()).has('window-shot')) {
-              // 引擎按窗口号截窗口本身（被别的窗口挡住也行），截不到自己退回按屏幕区域截
+              // the engine captures the window itself by window id (works even when covered); if it can't, it falls back to a screen-area capture on its own
               a.push('--window', String(w.windowId))
             } else {
-              // 旧引擎：插件自己按窗口号截；不行再让引擎按窗口所在那块屏的原点和缩放比裁（Retina / 副屏 / 负坐标都对）
+              // old engine: the plugin captures by window id itself; if that fails, let the engine crop using the origin and scale of the display the window sits on (correct for Retina / secondary displays / negative coordinates)
               rect = await shootWindow(w, file)
               if (!rect) a.push('--rect', `${w.x},${w.y},${w.width},${w.height}`)
             }
           }
           if (!rect) {
-            a.push('--out', file)                       // 放最后：万一碰上旧引擎（拿最后一个参数当输出路径）也只会写进私有目录
+            a.push('--out', file)                       // last on purpose: even an old engine (takes the last argument as the output path) then only writes into the private directory
             rect = parseRect(await run(a, 60000))
-            if (!rect) throw new Error('dsh-cu shot 没回截图范围：命令行引擎太旧，重新跑一遍 install.sh')
+            if (!rect) throw new Error('dsh-cu shot returned no capture rect: the CLI engine is too old, re-run install.sh')
           }
           let buf = fs.readFileSync(file)
           let k = 1
@@ -437,7 +437,7 @@ export function apply(ctx, config) {
             buf = fs.readFileSync(file)
             k = rect.width / maxWidth
           }
-          const note = `截图（${target} @(${rect.x},${rect.y}) ${rect.width}×${rect.height}，${Math.round(buf.length / 1024)}KB）\n${mapping(rect, k)}`
+          const note = `Screenshot (${target} @(${rect.x},${rect.y}) ${rect.width}×${rect.height}, ${Math.round(buf.length / 1024)}KB)\n${mapping(rect, k)}`
           const attachments = ctx.get('attachments')
           if (attachments) {
             try {
@@ -446,10 +446,10 @@ export function apply(ctx, config) {
               shotRefs.set(token, ref)
               if (shotRefs.size > 20) shotRefs.delete(shotRefs.keys().next().value)
               return { text: note, token }
-            } catch { /* 落文件兜底 */ }
+            } catch { /* fall back to saving the file */ }
           }
           keep = true
-          return { text: `${note}\n（附件库不可用，已存到 ${file}）`, token: '' }
+          return { text: `${note}\n(attachment store unavailable, saved to ${file})`, token: '' }
         } finally {
           if (!keep) removeDir(dir)
         }
@@ -459,17 +459,17 @@ export function apply(ctx, config) {
     defineTool({
       name: 'desktop_click',
       description:
-        '点击。**优先用 text**（OCR 找屏幕上的文字再点，最稳、不怕界面挪位置）；' +
-        '找不到文字再用 x/y 坐标（来自 desktop_screenshot 或 desktop_windows）。' +
-        '默认**投递给目标进程**（不移动你的真实鼠标、不抢前台）；某些应用不响应时加 global=true 走系统事件。' +
-        '点完会附一句窗口变化（新开 / 不见 / 标题变了 / 没变化）；输入、按键、拖拽也一样。',
+        'Click. **Prefer text** (OCR the text on screen, then click it — the most reliable way, immune to layout shifts); ' +
+        'fall back to x/y coordinates (from desktop_screenshot or desktop_windows) when the text cannot be found. ' +
+        'By default **delivered directly to the target process** (doesn\'t move your real mouse, doesn\'t steal focus); add global=true to go through system events for apps that don\'t respond. ' +
+        'The result appends one line about window changes (new window / gone / title changed / no change); typing, keys and dragging report the same way.',
       parameters: {
-        pid: { type: 'integer', required: true, description: '目标进程 pid（来自 desktop_windows）' },
-        index: { type: 'integer', description: 'desktop_observe 给的编号 —— **最推荐**，比坐标稳' },
-        text: { type: 'string', description: '要点的文字（OCR 找它，例如「登录」「Continue」）' },
-        x: { type: 'integer', description: '屏幕坐标 X（左上原点），没给 text 时必填' },
-        y: { type: 'integer', description: '屏幕坐标 Y（左上原点），没给 text 时必填' },
-        global: { type: 'boolean', description: 'true = 走系统事件并移动真实鼠标（默认 false）' },
+        pid: { type: 'integer', required: true, description: 'target process pid (from desktop_windows)' },
+        index: { type: 'integer', description: 'the number given by desktop_observe — **most recommended**, steadier than coordinates' },
+        text: { type: 'string', description: 'the text to click (located via OCR, e.g. "Log In", "Continue")' },
+        x: { type: 'integer', description: 'screen coordinate X (top-left origin); required when text is not given' },
+        y: { type: 'integer', description: 'screen coordinate Y (top-left origin); required when text is not given' },
+        global: { type: 'boolean', description: 'true = go through system events and move the real mouse (default false)' },
       },
       output: textOutput,
       presentCall: present('Desktop click'),
@@ -480,32 +480,32 @@ export function apply(ctx, config) {
           if (!cursorOn()) a.push('--no-cursor')
           return { text: await report(args.pid, () => run(a)) }
         }
-        let x = args.x, y = args.y, how = '坐标'
+        let x = args.x, y = args.y, how = 'coordinates'
         if (args.text) {
           const hit = await findText(args.text, args.pid)
-          x = hit.x; y = hit.y; how = `文字「${hit.text}」`
+          x = hit.x; y = hit.y; how = `text "${hit.text}"`
         }
-        if (x === undefined || y === undefined) throw new Error('要么给 text，要么给 x 和 y')
+        if (x === undefined || y === undefined) throw new Error('give either text, or both x and y')
         await ensureCursor()
-        cursorSay(args.text ? `label 点击 ${short(args.text)}` : 'label 点击')
+        cursorSay(args.text ? `label click ${short(args.text)}` : 'label click')
         const a = ['clickat', String(args.pid), String(Math.round(x)), String(Math.round(y))]
         if (args.global) a.push('--global')
         if (!cursorOn()) a.push('--no-cursor')
-        // 用引擎的真实结果：进程退出了、没辅助功能权限，引擎会报错，不能一律说点上了
-        return { text: await report(args.pid, async () => { const out = await run(a); return args.text ? `${out}（${how}）` : out }) }
+        // trust the engine's real result: a dead process or a missing accessibility permission makes the engine error out — don't blanket-claim the click landed
+        return { text: await report(args.pid, async () => { const out = await run(a); return args.text ? `${out} (${how})` : out }) }
       },
     }),
 
     defineTool({
       name: 'desktop_observe',
       description:
-        '**桌面操作的首选第一步**：截取目标窗口，并把所有可点元素（按钮/输入框/链接/勾选框…）在图上用蓝色编号标出来，' +
-        '同时返回编号清单（编号 / 类型 / 文字 / 坐标）。' +
-        '看完直接 `desktop_click(pid, index=N)` 点第 N 个 —— 比猜坐标可靠得多。' +
-        '（原理：走 macOS 无障碍树枚举元素；锁屏时拿不到，那种情况请改用 desktop_screenshot + desktop_find_text。）',
+        '**The preferred first step for desktop work**: captures the target window and marks every clickable element (buttons/input fields/links/checkboxes…) on the image with blue numbers, ' +
+        'and returns the numbered list (number / type / label / coordinates). ' +
+        'Then click element N directly with `desktop_click(pid, index=N)` — far more reliable than guessing coordinates. ' +
+        '(How: enumerates elements via the macOS accessibility tree; unavailable on the lock screen — in that case use desktop_screenshot + desktop_find_text instead.)',
       parameters: {
-        pid: { type: 'integer', required: true, description: '目标进程 pid（来自 desktop_windows）' },
-        limit: { type: 'integer', description: '最多标多少个元素，默认 60' },
+        pid: { type: 'integer', required: true, description: 'target process pid (from desktop_windows)' },
+        limit: { type: 'integer', description: 'maximum number of elements to mark, default 60' },
       },
       output: {
         schema: {
@@ -530,20 +530,20 @@ export function apply(ctx, config) {
           const a = ['observe', String(args.pid)]
           if (limit) a.push('--limit', String(limit))
           if (!cursorOn()) a.push('--no-cursor')
-          a.push('--out', out)                          // 放最后，理由同 desktop_screenshot
+          a.push('--out', out)                          // placed last, same reason as desktop_screenshot
           await ensureCursor()
-          cursorSay('label 查看窗口')
+          cursorSay('label inspecting window')
           let raw
           try {
             raw = await run(a, 60000)
           } catch (e) {
-            throw new Error(`${e.message}\n（如果应用没有窗口，或屏幕锁着，就用 desktop_screenshot + desktop_find_text）`)
+            throw new Error(`${e.message}\n(if the app has no window, or the screen is locked, use desktop_screenshot + desktop_find_text instead)`)
           }
           const lines = raw.split('\n')
           const file = lines[0]
           const win = (lines.find((l) => l.startsWith('window\t')) || '').split('\t')[1] || ''
           const items = lines.filter((l) => /^\d+\t/.test(l))
-          const text = `窗口 ${win}，共 ${items.length} 个可点元素：\n` +
+          const text = `Window ${win}, ${items.length} clickable elements:\n` +
             items.map((l) => { const [i, role, label, xy] = l.split('\t'); return `  [${i}] ${role.replace('AX', '')} «${label}» @${xy}` }).join('\n')
 
           const buf = fs.readFileSync(file)
@@ -558,7 +558,7 @@ export function apply(ctx, config) {
             } catch {}
           }
           keep = true
-          return { text: `${text}\n（附件库不可用，标注图在 ${file}）`, token: '' }
+          return { text: `${text}\n(attachment store unavailable, annotated image at ${file})`, token: '' }
         } finally {
           if (!keep) removeDir(dir)
         }
@@ -568,26 +568,26 @@ export function apply(ctx, config) {
     defineTool({
       name: 'desktop_find_text',
       description:
-        'OCR 找屏幕上的文字，返回它的屏幕坐标（可以直接喂给 desktop_click）。' +
-        '界面里找不到元素、又不想靠猜坐标时用它。可以指定 pid 只在那个窗口里找。',
+        'OCR-finds text on screen and returns its screen coordinates (feed them straight to desktop_click). ' +
+        'Use it when no element can be found in the UI and you would otherwise be guessing coordinates. A pid restricts the search to that window.',
       parameters: {
-        text: { type: 'string', required: true, description: '要找的文字（支持中英文）' },
-        pid: { type: 'integer', description: '可选：只在这个进程的窗口里找' },
+        text: { type: 'string', required: true, description: 'the text to find (supports Chinese and English)' },
+        pid: { type: 'integer', description: 'Optional: search only in this process\'s windows' },
       },
       output: textOutput,
       presentCall: present('Desktop find text'),
       async execute(args) {
         const hit = await findText(args.text, args.pid)
-        return { text: `找到「${hit.text}」@ (${Math.round(hit.x)}, ${Math.round(hit.y)})  置信度 ${hit.conf}` }
+        return { text: `Found "${hit.text}" @ (${Math.round(hit.x)}, ${Math.round(hit.y)})  confidence ${hit.conf}` }
       },
     }),
 
     defineTool({
       name: 'desktop_type',
-      description: '往目标进程输入文字（支持中文）。输入前通常要先用 desktop_click 点一下输入框。',
+      description: 'Types text into the target process (supports Chinese). Usually desktop_click the input field first.',
       parameters: {
-        pid: { type: 'integer', required: true, description: '目标进程 pid' },
-        text: { type: 'string', required: true, description: '要输入的文字' },
+        pid: { type: 'integer', required: true, description: 'target process pid' },
+        text: { type: 'string', required: true, description: 'the text to type' },
       },
       output: textOutput,
       presentCall: present('Desktop type'),
@@ -599,22 +599,22 @@ export function apply(ctx, config) {
 
     defineTool({
       name: 'desktop_apps',
-      description: '列出正在运行的应用（pid + 名字 + bundleId，* = 当前前台）。想操作某个应用先用它拿 pid。',
+      description: 'Lists running apps (pid + name + bundleId, * = currently frontmost). Get a pid here before operating on an app.',
       parameters: {},
       output: textOutput,
       presentCall: present('Desktop apps'),
       async execute() {
         const out = await run(['apps'])
         const list = out.split('\n').filter(Boolean)
-        return { text: list.length ? list.join('\n') : '(没有运行中的应用)' }
+        return { text: list.length ? list.join('\n') : '(no running apps)' }
       },
     }),
 
     defineTool({
       name: 'desktop_launch',
-      description: '在**后台**启动一个应用（不会抢前台、不打断用户）。参数可以是应用名（如 "TextEdit"、"计算器"）或 bundleId（如 "com.apple.TextEdit"）。',
+      description: 'Launches an app **in the background** (doesn\'t steal focus, doesn\'t interrupt the user). The target can be an app name (e.g. "TextEdit", "Calculator") or a bundleId (e.g. "com.apple.TextEdit").',
       parameters: {
-        target: { type: 'string', required: true, description: '应用名或 bundleId' },
+        target: { type: 'string', required: true, description: 'app name or bundleId' },
       },
       output: textOutput,
       presentCall: present('Desktop launch'),
@@ -625,20 +625,20 @@ export function apply(ctx, config) {
 
     defineTool({
       name: 'desktop_scroll',
-      description: '在目标窗口的 (x, y) 处滚动，单位是「行」（一般 3~10）。dy 为正向下滚、为负向上滚；dx 为正向右、为负向左（默认 0）。',
+      description: 'Scrolls at (x, y) in the target window; the unit is "lines" (usually 3~10). Positive dy scrolls down, negative scrolls up; positive dx scrolls right, negative scrolls left (default 0).',
       parameters: {
-        pid: { type: 'integer', required: true, description: '目标进程 pid' },
-        x: { type: 'integer', required: true, description: '滚轮所在屏幕坐标 X' },
-        y: { type: 'integer', required: true, description: '滚轮所在屏幕坐标 Y' },
-        dy: { type: 'integer', required: true, description: '纵向滚几行（正=向下，负=向上）' },
-        dx: { type: 'integer', description: '横向滚几行（正=向右，负=向左），默认 0' },
+        pid: { type: 'integer', required: true, description: 'target process pid' },
+        x: { type: 'integer', required: true, description: 'screen coordinate X where the wheel acts' },
+        y: { type: 'integer', required: true, description: 'screen coordinate Y where the wheel acts' },
+        dy: { type: 'integer', required: true, description: 'lines to scroll vertically (positive=down, negative=up)' },
+        dx: { type: 'integer', description: 'lines to scroll horizontally (positive=right, negative=left), default 0' },
       },
       output: textOutput,
       presentCall: present('Desktop scroll'),
       async execute(args) {
         await ensureCursor()
-        cursorSay(`label ${args.dy < 0 ? '向上滚动' : '向下滚动'}`)
-        // scroll-lines：单位是行、正=向下。旧引擎不认这个名字会直接报错，不会按像素反着滚
+        cursorSay(`label ${args.dy < 0 ? 'scrolling up' : 'scrolling down'}`)
+        // scroll-lines: the unit is lines, positive=down. An old engine that doesn't know this name errors out instead of scrolling the wrong way in pixels
         const a = ['scroll-lines', String(args.pid), String(args.x), String(args.y), String(args.dy)]
         if (args.dx) a.push(String(args.dx))
         if (!cursorOn()) a.push('--no-cursor')
@@ -648,19 +648,19 @@ export function apply(ctx, config) {
 
     defineTool({
       name: 'desktop_drag',
-      description: '从 (x1,y1) 拖到 (x2,y2)。用于拖文件、拖滑块、选中文本。',
+      description: 'Drags from (x1,y1) to (x2,y2). For dragging files, moving sliders or selecting text.',
       parameters: {
-        pid: { type: 'integer', required: true, description: '目标进程 pid' },
-        x1: { type: 'integer', required: true, description: '起点 X' },
-        y1: { type: 'integer', required: true, description: '起点 Y' },
-        x2: { type: 'integer', required: true, description: '终点 X' },
-        y2: { type: 'integer', required: true, description: '终点 Y' },
+        pid: { type: 'integer', required: true, description: 'target process pid' },
+        x1: { type: 'integer', required: true, description: 'start X' },
+        y1: { type: 'integer', required: true, description: 'start Y' },
+        x2: { type: 'integer', required: true, description: 'end X' },
+        y2: { type: 'integer', required: true, description: 'end Y' },
       },
       output: textOutput,
       presentCall: present('Desktop drag'),
       async execute(args) {
         await ensureCursor()
-        cursorSay('label 拖拽')
+        cursorSay('label drag')
         const a = ['drag', String(args.pid), String(args.x1), String(args.y1), String(args.x2), String(args.y2)]
         if (!cursorOn()) a.push('--no-cursor')
         return { text: await report(args.pid, () => run(a)) }
@@ -670,13 +670,13 @@ export function apply(ctx, config) {
     defineTool({
       name: 'desktop_key',
       description:
-        '给目标进程发按键。keycode 用 macOS 虚拟键码（回车 36、Tab 48、Esc 53、空格 49、' +
-        '方向键 123-126、删除 51）。可加修饰键：cmd / shift / alt / ctrl，例如 cmd+shift 就是 ["cmd","shift"]。' +
-        '目标在后台时，带 cmd 的全选 / 复制 / 粘贴这类系统快捷键多半不生效。',
+        'Sends key presses to the target process. keycode uses macOS virtual key codes (Return 36, Tab 48, Esc 53, Space 49, ' +
+        'arrow keys 123-126, Delete 51). Modifier flags: cmd / shift / alt / ctrl, e.g. cmd+shift is ["cmd","shift"]. ' +
+        'When the target is in the background, system shortcuts involving cmd (select all / copy / paste) mostly have no effect.',
       parameters: {
-        pid: { type: 'integer', required: true, description: '目标进程 pid' },
-        keycode: { type: 'integer', required: true, description: 'macOS 虚拟键码，例如回车 36' },
-        flags: { type: 'array', items: { type: 'string' }, description: '修饰键：cmd / shift / alt / ctrl' },
+        pid: { type: 'integer', required: true, description: 'target process pid' },
+        keycode: { type: 'integer', required: true, description: 'macOS virtual key code, e.g. Return 36' },
+        flags: { type: 'array', items: { type: 'string' }, description: 'modifiers: cmd / shift / alt / ctrl' },
       },
       output: textOutput,
       presentCall: present('Desktop key'),
@@ -687,17 +687,17 @@ export function apply(ctx, config) {
     }),
   ]
 
-  // 不是 macOS 就不给模型这些工具（用不了）；设置页照样挂，卡片会写「只支持 macOS」
+  // on non-macOS the model does not get these tools (they cannot work); the settings panel still mounts, and the card says "macOS only"
   if (process.platform !== 'darwin') {
-    trace(`不是 macOS（${process.platform}），不注册桌面工具`)
+    trace(`not macOS (${process.platform}); desktop tools not registered`)
   } else {
     for (const tool of tools) {
-      try { ctx.tools.register(tool) } catch (e) { trace(`注册 ${tool.name} 失败: ${e && e.message}`); throw e }
+      try { ctx.tools.register(tool) } catch (e) { trace(`failed to register ${tool.name}: ${e && e.message}`); throw e }
     }
-    trace(`已注册 ${tools.length} 个工具: ${tools.map((t) => t.name).join(', ')}`)
+    trace(`registered ${tools.length} tools: ${tools.map((t) => t.name).join(', ')}`)
   }
 
-  // DSH 设置页的数据路由。挂不上也只是设置页没数据，绝不能连累工具注册
+  // data route for the DSH settings panel. If it fails to mount, only the panel goes without data — never let it break tool registration
   try {
     if (typeof ctx.inject === 'function') {
       ctx.inject(['webServer'], (sub) => {
@@ -706,10 +706,10 @@ export function apply(ctx, config) {
           kind: 'exact', path: PANEL_ROUTE,
           handler: panelHandler({ origin: () => sub.webServer.getOrigin(), trace }),
         }), 'dsh-mac-computer-use: settings panel route')
-        trace(`设置页路由已挂上 ${PANEL_ROUTE}`)
+        trace(`settings panel route mounted at ${PANEL_ROUTE}`)
       })
     }
-  } catch (e) { trace(`设置页路由没挂上（忽略）: ${e && e.message}`) }
+  } catch (e) { trace(`settings panel route not mounted (ignored): ${e && e.message}`) }
 }
 
-trace('模块已加载')
+trace('module loaded')

@@ -1,6 +1,6 @@
 /**
- * 本机环境：命令行引擎 dsh-cu 在哪、光标浮层在不在、DSH 有没有系统权限、用户设置。
- * 工具（index.js）和 DSH 设置页（panel.js）共用。
+ * Local environment: where the command-line engine dsh-cu lives, whether the cursor overlay is installed, whether DSH has the system permissions, user settings.
+ * Shared by the tools (index.js) and the DSH settings panel (panel.js).
  */
 
 import { execFile, execFileSync } from 'node:child_process'
@@ -9,10 +9,10 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-/** 安装包里自带的程序（发版时编好的通用程序，Apple 芯片和 Intel 都能跑），见 tools/build-bin.mjs */
+/** Binaries bundled in the package (universal builds made at release time, run on Apple silicon and Intel), see tools/build-bin.mjs */
 const BUNDLED_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'bin')
 
-/** 自带的程序：在就确保能执行（个别安装方式会丢掉可执行位），回路径；不在回 null */
+/** Bundled binary: make sure it is executable (some install methods drop the exec bit), returns the path; null when missing */
 function bundled(name) {
   if (process.platform !== 'darwin') return null
   const p = path.join(BUNDLED_DIR, name)
@@ -29,7 +29,7 @@ function bundled(name) {
   }
 }
 
-// 找 dsh-cu 的位置：先看环境变量，再看插件自带的，再看 install.sh 装的位置，最后是开发目录（本机调试用）
+// locate dsh-cu: env var first, then the plugin's bundled copy, then the install.sh location, finally the dev folder (for local debugging)
 const CANDIDATES = [
   ['env', process.env.DSH_CU_BIN],
   ['bundled', bundled('dsh-cu')],
@@ -39,22 +39,22 @@ const CANDIDATES = [
 
 export const INSTALL_CMD = 'git clone https://github.com/OrderG-X/dsh-mac-computer-use.git && cd dsh-mac-computer-use && ./install.sh'
 
-/** 引擎更新：在家目录拉（或更新）一份源码再重装。之前在别处 clone 过也没关系，装的都是 ~/.dsh/bin */
+/** Engine update: clone (or update) a source copy in the home directory and reinstall. A previous clone elsewhere does not matter; it always installs to ~/.dsh/bin */
 export const UPDATE_CMD = 'cd ~ && { [ -d dsh-mac-computer-use ] || git clone https://github.com/OrderG-X/dsh-mac-computer-use.git; } && cd dsh-mac-computer-use && git pull --ff-only && ./install.sh'
 
-/** 协议号不变的引擎增强（dsh-cu features）。缺了不拦着用，只在设置页提示「引擎可以更新」 */
+/** Engine features that keep the protocol version (dsh-cu features). Missing ones do not block use; the settings panel only shows an "engine update available" hint */
 export const ENGINE_FEATURES = ['window-shot']
 
-/** 找不到二进制时的报错：必须自带公开安装步骤，不能只有本机才看得懂的路径提示。 */
+/** Error shown when the binary cannot be found: must carry public install steps, not just paths that only make sense on this machine. */
 export const INSTALL_HINT = [
-  '找不到命令行引擎 dsh-cu。插件安装包里本来自带一份；先在 DSH 里把插件更新到最新版或重装一次。',
-  '还是不行的话，自己从源码编译（一次性）：',
-  '1. 装 Xcode 命令行工具（提供 swiftc）：xcode-select --install',
-  '2. 拉源码并编译：',
+  'Command-line engine dsh-cu not found. The plugin package ships one; first update the plugin to the latest version in DSH, or reinstall it.',
+  'If that still fails, build it from source (one-time):',
+  '1. Install the Xcode Command Line Tools (provides swiftc): xcode-select --install',
+  '2. Fetch the source and build:',
   `     ${INSTALL_CMD}`,
-  '   它会用 swiftc 编译 dsh-cu 与光标浮层，装到 ~/.dsh/bin/',
-  '3. 回到这里重试即可（想看装没装好：ls ~/.dsh/bin/dsh-cu）',
-  '二进制在别处的话，用 DSH_CU_BIN=/path/to/dsh-cu 指过去。',
+  '   It builds dsh-cu and the cursor overlay with swiftc and installs them into ~/.dsh/bin/',
+  '3. Come back here and retry (to check whether it is installed: ls ~/.dsh/bin/dsh-cu)',
+  'If the binary lives somewhere else, point DSH_CU_BIN=/path/to/dsh-cu at it.',
 ].join('\n')
 
 /** @returns {{ path: string, source: 'env'|'bundled'|'installed'|'dev' } | null} */
@@ -67,8 +67,8 @@ export function findBin() {
 
 export const OVERLAY = process.env.DSH_CU_OVERLAY || bundled('dsh-cursor-overlay') || path.join(os.homedir(), '.dsh/bin/dsh-cursor-overlay')
 
-// 只认当前账号的浮层：别的账号开着的不算、也不去关
-// Windows / Linux 上没有 getuid：模块顶层直接调会让整个插件导入失败（DSH 里显示「没启动」）
+// only the current account's overlay counts: one run by another account is neither counted nor killed
+// there is no getuid on Windows / Linux: calling it at module top level would make the whole plugin import fail (DSH would show it as "not started")
 const UID = typeof process.getuid === 'function' ? String(process.getuid()) : ''
 const MINE = ['-U', UID, '-f', 'dsh-cursor-overlay']
 
@@ -80,12 +80,12 @@ export function overlayState() {
 }
 
 export function stopOverlay() {
-  try { execFileSync('/usr/bin/pkill', MINE, { stdio: 'ignore' }) } catch { /* 本来就没跑 */ }
+  try { execFileSync('/usr/bin/pkill', MINE, { stdio: 'ignore' }) } catch { /* not running anyway */ }
 }
 
-// ── 系统权限 ────────────────────────────────────────────────────────────────
-// osascript 是 DSH 派生出来的，系统按「负责的应用」算权限，所以这里查到的就是 DSH 自己有没有。
-// CGPreflightScreenCaptureAccess 不在 JXA 的默认桥里，得手动 bind。
+// ── System permissions ─────────────────────────────────────────────────────
+// osascript is spawned by DSH, so the system attributes permissions to the "responsible app"; what is checked here is DSH itself.
+// CGPreflightScreenCaptureAccess is not in JXA's default bridge; bind it manually.
 
 const PERM_JXA = [
   'ObjC.import("ApplicationServices")',
@@ -95,7 +95,7 @@ const PERM_JXA = [
 
 let permCache = { at: 0, value: null }
 
-/** @returns {Promise<{ screen: boolean|null, ax: boolean|null }>} null = 查不出来 */
+/** @returns {Promise<{ screen: boolean|null, ax: boolean|null }>} null = cannot be determined */
 export function permissions(maxAgeMs = 5000) {
   if (permCache.value && Date.now() - permCache.at < maxAgeMs) return Promise.resolve(permCache.value)
   return new Promise((resolve) => {
@@ -115,8 +115,8 @@ export const SETTINGS_PANES = {
   ax: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility',
 }
 
-// ── 用户设置 ────────────────────────────────────────────────────────────────
-// 存在 ~/.dsh/dsh-mac-computer-use.json。每次现读（文件很小），设置页一改马上生效，不用重启 DSH。
+// ── User settings ──────────────────────────────────────────────────────────
+// stored at ~/.dsh/dsh-mac-computer-use.json. Read fresh every time (the file is tiny), so changes from the settings panel take effect immediately without restarting DSH.
 
 export const CONFIG_FILE = process.env.DSH_CU_CONFIG || path.join(os.homedir(), '.dsh/dsh-mac-computer-use.json')
 const DEFAULTS = { showCursor: true }

@@ -1,35 +1,35 @@
-// DSH 桌面光标浮层 —— 点击穿透、不激活应用、永远置顶
+// DSH desktop cursor overlay — click-through, never activates the app, always on top
 //
-// 用法：
-//   dsh-cursor-overlay [--fifo 路径] [--size 26] [--idle 60]
-//   FIFO 默认在本用户私有临时目录：$(getconf DARWIN_USER_TEMP_DIR)dsh-cursor.fifo（别的账号占不了；插件、dsh-cu 同一个算法）
-// 控制（往 FIFO 写一行）：
-//   show <x> <y>     立即显示到屏幕坐标 (x,y)（Quartz 全局坐标，左上原点）
-//   move <x> <y>     平滑移动到 (x,y)
-//   click [n]        按一下（尖端缩一下 + 一圈淡波纹；n=2 双击两圈）
-//   down / up        拖拽：按住（缩一点 + 尖端一圈光晕）/ 松开
-//   scroll <±1>      滚动提示（箭头右上角一个小圆，往滚动方向轻轻滑一下）
-//   label <文字>     名牌从「DSH」展开成「DSH · 点击 发送」，过会儿收回；不带文字就立刻收回
-//   hide             隐藏
-//   lens <x> <y>     在 (x,y) 显示"工作中"旋转球（Codex 的 SkyLensView 同款素材，45 帧）
-//   lenshide         收起旋转球
-//   fog on|off       桌面变暗聚焦（Codex 的 FogBackgroundEffect 那层）
-//   ping             往 stderr 打一行当前状态（调试用）
-//   quit             退出
+// Usage:
+//   dsh-cursor-overlay [--fifo path] [--size 26] [--idle 60]
+//   FIFO defaults to this user's private temp dir: $(getconf DARWIN_USER_TEMP_DIR)dsh-cursor.fifo (other accounts can't claim it; plugin and dsh-cu share the same algorithm)
+// Control (write one line to the FIFO):
+//   show <x> <y>     Show at once at screen coords (x,y) (Quartz global coords, top-left origin)
+//   move <x> <y>     Glide smoothly to (x,y)
+//   click [n]        One click (tip shrinks + a faint ripple ring; n=2 double-click, two rings)
+//   down / up        Drag: press (shrink a bit + halo ring around the tip) / release
+//   scroll <±1>      Scroll hint (a small circle up-right of the arrow, nudges toward the scroll direction)
+//   label <text>     Nameplate expands from "DSH" to "DSH · click to send", retracts a moment later; empty text retracts at once
+//   hide             Hide
+//   lens <x> <y>     Show the "working" spinner at (x,y) (same assets as Codex's SkyLensView, 45 frames)
+//   lenshide         Retract the spinner
+//   fog on|off       Dim the desktop into focus (Codex's FogBackgroundEffect layer)
+//   ping             Print one line of current state to stderr (for debugging)
+//   quit             Quit
 //
-// 外观跟浏览器里的页内光标（dsh-chrome-bridge 的 in-page-cursor.js）是一套：
-//   同一个箭头、同一个蓝、同一套动效。区分靠两样 —— 桌面这边实心、名牌带显示器图标；
-//   浏览器那边半透明、名牌带地球图标。
-// 动效走克制路线，两边同一个弹簧、同一套算法：沿轻微的弧线滑过去，顺着速度方向轻轻拉长、
-// 略侧倾，名牌晚半拍跟上，到了冲过头最多两三像素；点击时以尖端为支点缩一下再弹回，一圈淡波纹。
-// 系统开了「减少动态效果」就直接跳过去、不做动画。
+// The look is one set with the browser's in-page cursor (dsh-chrome-bridge's in-page-cursor.js):
+//   same arrow, same blue, same motion. Two things set them apart — the desktop side is solid, nameplate with a monitor icon;
+//   the browser side is translucent, nameplate with a globe icon.
+// Motion stays restrained; both sides share one spring, one algorithm: glide along a slight arc, stretch gently along the velocity,
+// tilt slightly, nameplate follows half a beat behind and overshoots by at most a couple of pixels on arrival; clicks shrink around the tip as pivot and bounce back with one faint ripple.
+// With the system's "Reduce Motion" on, jump straight there and skip the animation.
 //
-// 关键点：
-//   * NSPanel + .nonactivatingPanel + orderFrontRegardless() → 绝不抢前台
-//   * ignoresMouseEvents = true → 点击穿透，不挡你操作
-//   * level = .screenSaver → 永远在所有窗口之上
-//   * setActivationPolicy(.accessory) → 不占 Dock、不参与 Cmd-Tab
-//   * 全用 CALayer 画（不依赖图片素材），面板里只有一层 layer 树，60fps 手动驱动
+// Key points:
+//   * NSPanel + .nonactivatingPanel + orderFrontRegardless() → never steals the foreground
+//   * ignoresMouseEvents = true → click-through, never blocks your input
+//   * level = .screenSaver → always above every window
+//   * setActivationPolicy(.accessory) → no Dock icon, no Cmd-Tab entry
+//   * Drawn entirely with CALayer (no image assets); the panel holds a single layer tree, driven manually at 60fps
 
 import AppKit
 import Foundation
@@ -46,9 +46,9 @@ let fifoPath = argValue("--fifo", {
     let dir = confstr(_CS_DARWIN_USER_TEMP_DIR, &buf, buf.count) > 0 ? String(cString: buf) : NSTemporaryDirectory()
     return (dir as NSString).appendingPathComponent("dsh-cursor.fifo")
 }())
-/// 箭头画在 size×size 的方框里（跟浏览器的 26px 一样）
+/// The arrow is drawn inside a size×size box (same as the browser's 26px)
 let cursorSize = CGFloat(Double(argValue("--size", "26")) ?? 26)
-// 空闲多久自己退出（秒）。不留常驻进程吃内存 —— 下次要用会被重新拉起。
+// How long to idle before exiting on its own (seconds). No resident process hogging memory — it gets relaunched when needed again.
 let idleSeconds = Double(argValue("--idle", "60")) ?? 60
 var lastActivity = Date()
 
@@ -58,7 +58,7 @@ func rgb(_ hex: UInt32, _ a: CGFloat = 1) -> CGColor {
 }
 let white = CGColor(srgbRed: 1, green: 1, blue: 1, alpha: 1)
 
-// ── 形状：跟浏览器里那支箭头同一条路径（24×24 坐标，尖端在 (4, 3)）──────────────
+// ── Shape: the exact same path as the browser arrow (24×24 coords, tip at (4, 3))──────────────
 //   M4 3.2v16.1c0 .8.95 1.2 1.5.62l3.86-4.02 3.07 6.3c.25.5.86.71 1.36.47l2.04-.98
 //   c.5-.24.71-.84.47-1.34l-3.05-6.25 5.5-.2c.82-.03 1.2-1.03.6-1.6L5.65 2.5C5.06 1.95 4 2.37 4 3.2z
 func arrowPath(scale k: CGFloat) -> CGPath {
@@ -88,7 +88,7 @@ func arrowPath(scale k: CGFloat) -> CGPath {
     return p
 }
 
-/// 名牌的形状：左上角小圆角（指向箭头），其余大圆角
+/// Nameplate shape: small corner radius at the top-left (points at the arrow), large radius elsewhere
 func tagPath(_ r: CGRect) -> CGPath {
     let p = CGMutablePath()
     let tl = min(4, r.height / 2), o = min(11, r.height / 2, r.width / 2)
@@ -101,7 +101,7 @@ func tagPath(_ r: CGRect) -> CGPath {
     return p
 }
 
-/// 显示器图标（12×12），浏览器那边是地球
+/// Monitor icon (12×12); the browser side uses a globe
 func monitorIcon() -> CGPath {
     let p = CGMutablePath()
     p.addRoundedRect(in: CGRect(x: 1, y: 1.6, width: 10, height: 6.8), cornerWidth: 1.2, cornerHeight: 1.2)
@@ -114,15 +114,15 @@ let lerp = { (a: CGFloat, b: CGFloat, t: CGFloat) -> CGFloat in a + (b - a) * t 
 let easeOut = { (t: CGFloat) -> CGFloat in 1 - pow(1 - t, 3) }
 let easeInOut = { (t: CGFloat) -> CGFloat in t < 0.5 ? 4 * t * t * t : 1 - pow(-2 * t + 2, 3) / 2 }
 
-/// 位置弹簧（Codex 的 scoot 思路，参数收敛过：几乎不回弹、拉伸幅度跟浏览器一样最多 7%）
+/// Position spring (Codex's scoot idea, tuned params: almost no bounce-back, stretch up to 7% like the browser)
 final class Spring {
-    var pos = CGPoint.zero      // Quartz 坐标（左上原点，y 向下）—— 尖端所在
+    var pos = CGPoint.zero      // Quartz coords (top-left origin, y down) — where the tip sits
     var vel = CGPoint.zero
     var target = CGPoint.zero
     var live = false
 
-    let response = 0.34         // 弹簧响应（秒）
-    let damping = 0.86          // 阻尼比：<1 有一丁点回弹，远距离也就两三像素
+    let response = 0.34         // spring response (seconds)
+    let damping = 0.86          // damping ratio: <1 gives a slight bounce, at most a couple of pixels over long moves
 
     func jump(to p: CGPoint) { pos = p; target = p; vel = .zero; live = true }
     func move(to p: CGPoint) {
@@ -150,7 +150,7 @@ final class FlippedView: NSView {
 }
 
 final class OverlayController: NSObject {
-    // 面板布局（视图坐标，左上原点）：尖端固定在 (M, M)，四周留出波纹 / 拉伸 / 阴影的余量，右下放名牌
+    // Panel layout (view coords, top-left origin): tip pinned at (M, M), margins around for ripple / stretch / shadow, nameplate at bottom-right
     static let M: CGFloat = 26
     static let W: CGFloat = 360
     static let H: CGFloat = 84
@@ -167,31 +167,31 @@ final class OverlayController: NSObject {
     let who = CATextLayer()
     let what = CATextLayer()
     let k = cursorSize / 24
-    let scale = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2   // 多屏时按最高倍率画，哪块屏上都清楚
+    let scale = NSScreen.screens.map(\.backingScaleFactor).max() ?? 2   // draw at the highest scale factor across screens, crisp on any display
 
     let spring = Spring()
     var timer: Timer?
     var visible = false
     var last = Date()
 
-    // 动效状态
-    var shownAt = Date.distantPast        // 出场动画起点
-    var pressAt = Date.distantPast        // 点击动画起点
+    // Animation state
+    var shownAt = Date.distantPast        // entrance animation start
+    var pressAt = Date.distantPast        // click animation start
     var pressDur = 0.26
     var stretch: CGFloat = 1, tilt: CGFloat = 0, dir: CGFloat = 0
-    var lag = CGPoint.zero                // 名牌落后的量
-    var wokeAt = Date()                   // 最近一次有动作
-    var dim: CGFloat = 1                  // 闲下来变淡
+    var lag = CGPoint.zero                // how far the nameplate lags behind
+    var wokeAt = Date()                   // last time something happened
+    var dim: CGFloat = 1                  // dims when idle
     var labelUntil = Date.distantPast
     var whoW: CGFloat = 0, whatW: CGFloat = 0
-    var tagW: CGFloat = 0                 // 名牌当前宽度（逐帧追目标值）
-    var whatA: CGFloat = 0                // 动作文字当前不透明度
-    var lastOrigin: NSPoint?              // 上一帧实际摆到的位置 / 画出来的值：没变就跳过
+    var tagW: CGFloat = 0                 // current nameplate width (chases the target frame by frame)
+    var whatA: CGFloat = 0                // current opacity of the action text
+    var lastOrigin: NSPoint?              // last frame's actual placed position / drawn value: skip if unchanged
     var lastKey: [CGFloat] = []
-    var pressHeld = false                 // 拖拽中一直按着
+    var pressHeld = false                 // button held down during a drag
     var hold: CGFloat = 1
-    var arcFrom = CGPoint.zero, arcTo = CGPoint.zero, arcBend: CGFloat = 0   // 当前这段弧线
-    var prevDisp: CGPoint?                // 上一帧画出来的位置：真实速度（含弧线那一分量）按它算
+    var arcFrom = CGPoint.zero, arcTo = CGPoint.zero, arcBend: CGFloat = 0   // the current arc segment
+    var prevDisp: CGPoint?                // last drawn position: true velocity (including the arc component) is derived from it
     var dispVel = CGPoint.zero
     var exiting = false
     let halo = CAShapeLayer()
@@ -215,9 +215,9 @@ final class OverlayController: NSObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         panel.isMovable = false
 
-        // layer-hosting：先给 layer 再 wantsLayer，AppKit 就不会去动我们的 layer 树。
-        // 子 layer 全用左上原点（跟浏览器一致）：AppKit 会按视图的 isFlipped 改写根 layer 的
-        // geometryFlipped，所以视图本身得是 flipped 的，光设 layer 不管用
+        // layer-hosting: set the layer before wantsLayer and AppKit never touches our layer tree.
+        // Sublayers all use a top-left origin (matching the browser): AppKit rewrites the root layer's
+        // geometryFlipped from the view's isFlipped, so the view itself must be flipped; setting the layer alone isn't enough
         let view = FlippedView(frame: rect)
         root.frame = rect
         root.masksToBounds = false
@@ -230,7 +230,7 @@ final class OverlayController: NSObject {
         buildExtras()
     }
 
-    /// 拖拽时尖端的光晕 + 滚动提示小圆（跟浏览器那边同款）
+    /// Tip halo while dragging + the scroll-hint circle (same design as the browser side)
     func buildExtras() {
         halo.bounds = CGRect(x: 0, y: 0, width: 22, height: 22)
         halo.position = tip
@@ -266,10 +266,10 @@ final class OverlayController: NSObject {
         let box = 24 * k
         let path = arrowPath(scale: k)
         arrow.bounds = CGRect(x: 0, y: 0, width: box, height: box)
-        arrow.anchorPoint = CGPoint(x: 4.0 / 24, y: 3.0 / 24)   // 支点在尖端：缩放、侧倾时瞄准点纹丝不动
+        arrow.anchorPoint = CGPoint(x: 4.0 / 24, y: 3.0 / 24)   // pivot at the tip: the aim point stays put while scaling or tilting
         arrow.position = tip
 
-        // 白描边（画在填充下面，只露外半圈 —— 跟 SVG 的 paint-order: stroke 一样）+ 投影
+        // White stroke (drawn under the fill so only the outer half shows — like SVG's paint-order: stroke) + drop shadow
         let edge = CAShapeLayer()
         edge.frame = arrow.bounds
         edge.path = path
@@ -283,7 +283,7 @@ final class OverlayController: NSObject {
         edge.shadowOffset = CGSize(width: 0, height: 1.5)
         edge.contentsScale = scale
 
-        // 实心蓝渐变
+        // Solid blue gradient
         let fill = CAGradientLayer()
         fill.frame = arrow.bounds
         fill.colors = [rgb(0x6F8BFF), rgb(0x3552F2)]
@@ -304,7 +304,7 @@ final class OverlayController: NSObject {
         tag.anchorPoint = .zero
         tag.position = CGPoint(x: tip.x + 17, y: tip.y + 21)
 
-        tagRing.fillColor = rgb(0xFFFFFF, 0.55)       // 外圈 1px 白边
+        tagRing.fillColor = rgb(0xFFFFFF, 0.55)       // outer 1px white rim
         tagRing.shadowColor = rgb(0x1E32A0)
         tagRing.shadowOpacity = 0.35
         tagRing.shadowRadius = 4
@@ -361,7 +361,7 @@ final class OverlayController: NSObject {
         tagClip.frame = r
     }
 
-    /// Quartz 全局坐标（左上原点）→ 面板原点（AppKit，左下原点）：让尖端 (M, M) 正好落在 (x, y)
+    /// Quartz global coords (top-left origin) → panel origin (AppKit, bottom-left origin): places the tip (M, M) exactly at (x, y)
     func panelOrigin(_ p: CGPoint) -> NSPoint {
         let screenH = NSScreen.screens.first?.frame.height ?? 0
         return NSPoint(x: p.x - tip.x, y: screenH - p.y + tip.y - OverlayController.H)
@@ -379,13 +379,13 @@ final class OverlayController: NSObject {
             panel.setFrameOrigin(lastOrigin!)
             root.opacity = 1
             shownAt = reduceMotion ? .distantPast : Date()
-            panel.orderFrontRegardless()       // 显示但不激活本进程
+            panel.orderFrontRegardless()       // show without activating this process
             visible = true
             startTicking()
             return
         }
         if animate && !reduceMotion {
-            // 从此刻画出来的位置起一段新弧线（半路改道也不会跳）；弯法跟浏览器一样
+            // Start a new arc from the position drawn right now (no jump when retargeting mid-flight); bending matches the browser
             let from = displayPos()
             spring.pos = from
             let d = hypot(p.x - from.x, p.y - from.y)
@@ -398,7 +398,7 @@ final class OverlayController: NSObject {
         }
     }
 
-    /// 弹簧走的是直线；画的时候按"走了几成"往一侧推出去，就是一段二次贝塞尔弧线
+    /// The spring travels a straight line; when drawing, push it sideways by "how far along" it is — that yields a quadratic Bezier arc
     func displayPos() -> CGPoint {
         let p = spring.pos
         guard arcBend != 0 else { return p }
@@ -420,7 +420,7 @@ final class OverlayController: NSObject {
             s.append(NSAttributedString(string: body, attributes: [.font: whatFont, .foregroundColor: NSColor(white: 1, alpha: 0.96)]))
             return s
         }
-        // 太长就从尾巴截、补省略号，直到放得进 230pt（跟浏览器名牌的最大宽度一样）
+        // Truncate from the tail with an ellipsis until it fits within 230pt (same max width as the browser nameplate)
         var body = t.count > 60 ? String(t.prefix(59)) + "…" : t
         var s = make(body)
         while s.size().width > 230 && body.count > 2 {
@@ -442,7 +442,7 @@ final class OverlayController: NSObject {
         for i in 0..<max(1, min(3, count)) { ripple(delay: Double(i) * 0.13) }
     }
 
-    /// 拖拽：按住 —— 箭头缩一点，尖端一圈光晕
+    /// Drag: press-and-hold — the arrow shrinks a bit, halo ring around the tip
     func down() {
         wake()
         pressHeld = true
@@ -461,7 +461,7 @@ final class OverlayController: NSObject {
         CATransaction.commit()
     }
 
-    /// 滚动提示：右上角小圆里一个箭头，往滚动方向轻轻滑一下就淡出
+    /// Scroll hint: an arrow inside the small circle up-right, slides gently toward the scroll direction, then fades out
     func scroll(_ dir: CGFloat) {
         wake()
         let p = CGMutablePath()
@@ -483,7 +483,7 @@ final class OverlayController: NSObject {
         wheel.add(g, forKey: "scroll")
     }
 
-    /// 一圈淡波纹 + 中心小圆点，从尖端漾开
+    /// A faint ripple ring + a small center dot, spreading out from the tip
     func ripple(delay: Double) {
         let ring = CAShapeLayer()
         ring.bounds = CGRect(x: 0, y: 0, width: 40, height: 40)
@@ -549,7 +549,7 @@ final class OverlayController: NSObject {
         let disp = displayPos()
         let origin = panelOrigin(disp)
         if origin != lastOrigin { panel.setFrameOrigin(origin); lastOrigin = origin }
-        // 真实速度（含弧线那一分量）：拉伸、侧倾、名牌落后都按它算，跟浏览器同一个算法
+        // True velocity (including the arc component): stretch, tilt and nameplate lag all derive from it — same algorithm as the browser
         if let pd = prevDisp, dt > 0 {
             dispVel = CGPoint(x: (disp.x - pd.x) / CGFloat(dt), y: (disp.y - pd.y) / CGFloat(dt))
         } else {
@@ -557,7 +557,7 @@ final class OverlayController: NSObject {
         }
         prevDisp = disp
 
-        // 顺着速度方向轻轻拉长 + 侧倾（都跟速度成正比，停下就归零）；拖拽按住时不拉
+        // Stretch gently along the velocity + tilt (both proportional to speed, reset to zero when stopped); no stretch while a drag is held
         let v = pressHeld ? CGPoint.zero : dispVel
         let speed = hypot(v.x, v.y)
         let amount = min(1, speed / 2600)
@@ -565,19 +565,19 @@ final class OverlayController: NSObject {
         stretch = lerp(stretch, 1 + 0.07 * amount, smooth)
         tilt = lerp(tilt, speed > 1 ? (v.x / speed) * 0.10 * amount : 0, smooth)
         if speed > 30 { dir = atan2(v.y, v.x) }
-        // 名牌晚半拍：往速度反方向落后一点（最多 5px），追回来
+        // Nameplate half a beat behind: lags slightly against the velocity (up to 5px), then catches up
         let lmax: CGFloat = 5
         let want = CGPoint(x: max(-lmax, min(lmax, -v.x * 0.004)), y: max(-lmax, min(lmax, -v.y * 0.004)))
         lag = CGPoint(x: lerp(lag.x, want.x, smooth), y: lerp(lag.y, want.y, smooth))
 
-        // 出场：从 0.6 放大到 1.04 再落到 1，同时淡入
+        // Entrance: scale from 0.6 up to 1.04, settle back to 1, while fading in
         let ua = CGFloat(now.timeIntervalSince(shownAt) / 0.28)
         var appear: CGFloat = 1, appearA: CGFloat = 1
         if ua < 1 {
             appear = ua < 0.7 ? lerp(0.6, 1.04, easeOut(ua / 0.7)) : lerp(1.04, 1, (ua - 0.7) / 0.3)
             appearA = min(1, ua / 0.7)
         }
-        // 点击：尖端为支点缩到 0.86，轻轻弹到 1.03，再归位
+        // Click: shrink to 0.86 around the tip as pivot, bounce gently to 1.03, then settle back
         let up = CGFloat(now.timeIntervalSince(pressAt) / pressDur)
         var press: CGFloat = 1
         if up < 1 {
@@ -588,12 +588,12 @@ final class OverlayController: NSObject {
 
         hold = lerp(hold, pressHeld ? 0.88 : 1, CGFloat(1 - exp(-dt * 25)))
 
-        // 闲 6 秒变淡、名牌收起（跟浏览器一样：淡到原来的三分之二）
+        // After 6 idle seconds, dim and retract the nameplate (like the browser: fade to two-thirds)
         let idle = now.timeIntervalSince(wokeAt) > 6
         dim = lerp(dim, idle ? 0.66 : 1, CGFloat(1 - exp(-dt * 6)))
         if idle { labelUntil = .distantPast }
 
-        // 名牌宽度 / 文字透明度追目标值
+        // Nameplate width / text opacity chase their target values
         let tw = targetW
         tagW = abs(tw - tagW) < 0.3 ? tw : lerp(tagW, tw, CGFloat(1 - exp(-dt * 14)))
         whatA = lerp(whatA, tw > collapsedW ? 1 : 0, CGFloat(1 - exp(-dt * (tw > collapsedW ? 10 : 22))))
@@ -606,7 +606,7 @@ final class OverlayController: NSObject {
 
         let tagA = min(1, max(0, CGFloat((now.timeIntervalSince(shownAt) - 0.06) / 0.26)))
 
-        // 什么都没变就不碰 layer：停着不动时每帧只剩几次比较，不重画
+        // Touch no layers when nothing changed: while parked, each frame is just a few comparisons, no redraw
         let key: [CGFloat] = [t.a, t.b, t.c, t.d, appearA, lag.x, lag.y, tagA, tagW, whatA, dim]
         if key.count == lastKey.count && zip(key, lastKey).allSatisfy({ abs($0 - $1) < 0.0005 }) { return }
         let widthChanged = lastKey.count != key.count || abs(lastKey[8] - tagW) >= 0.0005
@@ -635,7 +635,7 @@ final class OverlayController: NSObject {
         halo.opacity = 0
     }
 
-    /// 闲太久要退出时先淡出 0.25 秒，别"啪"一下没了；淡出途中又来了指令就接着干
+    /// Before quitting after a long idle, fade out over 0.25s instead of vanishing abruptly; commands arriving mid-fade resume normal operation
     func fadeOut(then done: @escaping () -> Void) {
         guard visible, !reduceMotion else { done(); return }
         timer?.invalidate(); timer = nil
@@ -660,7 +660,7 @@ final class OverlayController: NSObject {
     }
 }
 
-// ── "工作中"旋转球：素材直接取自 Codex 的 LensSequence（45 帧）──────
+// ── "Working" spinner: frames taken directly from Codex's LensSequence (45 frames)──────
 final class LensView: NSView {
     var frames: [NSImage] = []
     var idx = 0
@@ -683,7 +683,7 @@ final class LensView: NSView {
 }
 
 final class FogView: NSView {
-    var focus: NSPoint = .zero          // AppKit 坐标（左下原点）
+    var focus: NSPoint = .zero          // AppKit coords (bottom-left origin)
     var radius: CGFloat = 200
     var dim: CGFloat = 0.5
 
@@ -692,7 +692,7 @@ final class FogView: NSView {
         ctx.compositingOperation = .sourceOver
         NSColor(calibratedWhite: 0, alpha: dim).setFill()
         bounds.fill()
-        // 用 destinationOut + 径向渐变把中心"擦亮"
+        // Use destinationOut + a radial gradient to "wipe" the center clear
         ctx.compositingOperation = .destinationOut
         let grad = NSGradient(colors: [
             NSColor(calibratedWhite: 0, alpha: 1.0),
@@ -704,7 +704,7 @@ final class FogView: NSView {
 }
 
 final class EffectsController: NSObject {
-    /// 特效自动收起的延时（秒）—— 操作停了就收干净，不糊在用户屏幕上
+    /// Auto-retract delay for effects (seconds) — clean up once activity stops, don't linger on the user's screen
     let fxIdle: Double = 6
     var fxTimer: Timer?
     func keepAlive() {
@@ -743,7 +743,7 @@ final class EffectsController: NSObject {
         }
         let screenH = NSScreen.screens.first?.frame.height ?? 0
         let size = lensPanel!.frame.width
-        // 球放在光标右下方一点，不挡住它
+        // Place the spinner just below-right of the cursor so it doesn't cover it
         lensPanel!.setFrameOrigin(NSPoint(x: CGFloat(x) + 6, y: screenH - CGFloat(y) - size + 4))
         lensPanel!.orderFrontRegardless()
         lensView?.start()
@@ -763,7 +763,7 @@ final class EffectsController: NSObject {
                 p.isOpaque = false
                 p.backgroundColor = .clear
                 p.hasShadow = false; p.ignoresMouseEvents = true; p.hidesOnDeactivate = false
-                p.level = .init(rawValue: NSWindow.Level.screenSaver.rawValue - 1)   // 在光标/球之下
+                p.level = .init(rawValue: NSWindow.Level.screenSaver.rawValue - 1)   // below the cursor / spinner
                 p.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
                 let v = FogView(frame: NSRect(origin: .zero, size: f.size))
                 p.contentView = v
@@ -776,7 +776,7 @@ final class EffectsController: NSObject {
         }
     }
 
-    /// 把"亮斑"挪到光标处
+    /// Move the "bright spot" to the cursor
     func fogFocus(x: Double, y: Double) {
         guard let v = fogView else { return }
         let screenH = NSScreen.screens.first?.frame.height ?? 0
@@ -788,13 +788,13 @@ final class EffectsController: NSObject {
 let controller = OverlayController()
 let effects = EffectsController()
 
-// ---- FIFO 命令通道 ----
+// ---- FIFO command channel ----
 try? FileManager.default.removeItem(atPath: fifoPath)
 mkfifo(fifoPath, 0o600)
 
 let fd = open(fifoPath, O_RDONLY | O_NONBLOCK)
 if fd < 0 {
-    FileHandle.standardError.write("dsh-cursor-overlay: 无法打开 FIFO \(fifoPath)\n".data(using: .utf8)!)
+    FileHandle.standardError.write("dsh-cursor-overlay: cannot open FIFO \(fifoPath)\n".data(using: .utf8)!)
     exit(1)
 }
 
@@ -845,7 +845,7 @@ func handle(_ line: String) {
     }
 }
 
-// 用 DispatchSource 轮询 FIFO（无读者时写入端会阻塞，故保持 fd 常开）
+// Poll the FIFO with a DispatchSource (the write end would block with no reader, so the fd stays open)
 let src = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .main)
 var buffer = Data()
 src.setEventHandler {
@@ -864,8 +864,8 @@ src.setEventHandler {
 }
 src.resume()
 
-// ---- 空闲自杀 ----
-// 没有指令超过 idleSeconds 就退出并删掉 FIFO。用户不该为一次操作留一个常驻进程。
+// ---- Idle self-exit ----
+// Exit and remove the FIFO when no commands arrive for longer than idleSeconds. A single action shouldn't leave the user a resident process.
 let idleTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
     if Date().timeIntervalSince(lastActivity) >= idleSeconds && !controller.exiting {
         controller.exiting = true
@@ -879,5 +879,5 @@ let idleTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
 RunLoop.main.add(idleTimer, forMode: .common)
 
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory)   // 不占 Dock、不进 Cmd-Tab、不抢前台
+app.setActivationPolicy(.accessory)   // no Dock icon, no Cmd-Tab entry, never steals focus
 app.run()

@@ -1,65 +1,65 @@
 #!/bin/bash
-# dsh-mac-computer-use 一键安装：编译命令行引擎 dsh-cu + 光标浮层（光标是代码画的，不用素材）。
-# 装完再去 DSH 的插件页把本仓库的 plugin/ 目录（或仓库地址）加进去。
+# dsh-mac-computer-use one-shot installer: builds the dsh-cu command-line engine and the cursor overlay (the cursor is drawn in code, no image assets needed).
+# When it finishes, add this repo's plugin/ directory (or the repo URL) on the DSH Plugins page.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BIN="${DSH_BIN_DIR:-$HOME/.dsh/bin}"
 SHARE="${DSH_SHARE_DIR:-$HOME/.dsh/share}"
 
-echo "═══ dsh-mac-computer-use 安装 ═══"
-echo "  仓库: $HERE"
-echo "  目标: $BIN"
+echo "═══ dsh-mac-computer-use install ═══"
+echo "  repo:   $HERE"
+echo "  target: $BIN"
 echo
 
-# ── 0. 检查环境 ─────────────────────────────────────────────────────────────
+# ── 0. Environment checks ─────────────────────────────────────────────────────────────
 if [ "$(uname)" != "Darwin" ]; then
-  echo "❌ 只支持 macOS（用到了 CGWindowList / AXUIElement / Vision）"; exit 1
+  echo "❌ macOS only (uses CGWindowList / AXUIElement / Vision)"; exit 1
 fi
 if ! command -v swiftc >/dev/null 2>&1; then
-  echo "❌ 找不到 swiftc。装一下 Xcode Command Line Tools："
+  echo "❌ swiftc not found. Install the Xcode Command Line Tools first:"
   echo "     xcode-select --install"
   exit 1
 fi
 mkdir -p "$BIN" "$SHARE"
 
-# ── 1. 命令行工具 ───────────────────────────────────────────────────────────
-echo "① 编译 dsh-cu …"
+# ── 1. Command-line tool ───────────────────────────────────────────────────────────
+echo "① Building dsh-cu …"
 swiftc -O -o "$BIN/dsh-cu" "$HERE/tools/dsh-cu.swift" \
   -framework AppKit -framework ApplicationServices -framework Vision
 echo "   ✅ $BIN/dsh-cu"
 
-# ── 2. 光标浮层 ─────────────────────────────────────────────────────────────
-echo "② 编译光标浮层 …"
+# ── 2. Cursor overlay ─────────────────────────────────────────────────────────────
+echo "② Building the cursor overlay …"
 swiftc -O -o "$BIN/dsh-cursor-overlay" "$HERE/cursor/cursor-overlay.swift" \
   -framework AppKit -framework QuartzCore
 echo "   ✅ $BIN/dsh-cursor-overlay"
 
-# 开发目录里打包（npm pack）留下的自带程序：插件会优先用它，删掉免得用到旧的
+# Prebuilt binaries left in the dev tree by packaging (npm pack): the plugin prefers those, so delete them to avoid running stale copies
 if [ -d "$HERE/plugin/bin" ]; then
   rm -rf "$HERE/plugin/bin"
-  echo "   （删掉了 plugin/bin 里打包留下的旧程序，插件改用 $BIN 里这份）"
+  echo "   (removed the stale packaged binaries from plugin/bin; the plugin will now use the copy in $BIN)"
 fi
 
 # ── 3. PATH ─────────────────────────────────────────────────────────────────
 if ! echo "$PATH" | grep -q "$BIN"; then
   echo
-  echo "⚠️  $BIN 不在 PATH 里。加到 shell 配置："
+  echo "⚠️  $BIN is not on your PATH. Add it to your shell config:"
   echo "     echo 'export PATH=\"\$HOME/.dsh/bin:\$PATH\"' >> ~/.zshrc"
 fi
 
 cat <<EOF
 
-═══ 装完了 ═══
+═══ Done ═══
 
-命令行自测：
-  $BIN/dsh-cu winlist          # 列窗口
-  $BIN/dsh-cu observe <pid>    # 截图标出可点元素
-  $HERE/tools/selftest.sh      # 全链路自检
+Quick self-test from the command line:
+  $BIN/dsh-cu winlist          # list windows
+  $BIN/dsh-cu observe <pid>    # screenshot with numbered clickable elements
+  $HERE/tools/selftest.sh      # full end-to-end self-test
 
-DSH 插件：去「插件」页，把下面任一个加进去
-  • 本仓库地址（推荐，能自动更新）
-  • 或本地路径 $HERE/plugin
+DSH plugin: go to the Plugins page and add either of these
+  • this repo's URL (recommended — enables auto-updates)
+  • or the local path $HERE/plugin
 
-装完重启 DSH。
+Restart DSH once the plugin is installed.
 EOF
