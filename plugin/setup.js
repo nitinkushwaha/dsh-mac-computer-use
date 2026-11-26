@@ -119,7 +119,7 @@ export const SETTINGS_PANES = {
 // stored at ~/.dsh/dsh-mac-computer-use.json. Read fresh every time (the file is tiny), so changes from the settings panel take effect immediately without restarting DSH.
 
 export const CONFIG_FILE = process.env.DSH_CU_CONFIG || path.join(os.homedir(), '.dsh/dsh-mac-computer-use.json')
-const DEFAULTS = { showCursor: true }
+const DEFAULTS = { showCursor: true, panelHosts: [] }
 
 export function readConfig() {
   try { return { ...DEFAULTS, ...JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) } } catch { return { ...DEFAULTS } }

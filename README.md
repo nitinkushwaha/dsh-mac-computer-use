@@ -63,6 +63,14 @@ The package bundles a prebuilt command-line engine and cursor overlay (Apple sil
 
 Once installed, it shows up on the Plugins page as **Mac Desktop Control**. Opening it reveals a settings page: whether the plugin works and how many windows it can see, with a checklist covering the command-line engine, Screen Recording permission, Accessibility permission and the cursor overlay — anything missing gets its own button (which opens System Settings), plus a toggle for showing the action cursor on screen.
 
+**Remote DSH setups:** the settings page polls the plugin's HTTP route on DSH's web server. When you reach DSH as `https://your-dsh-host` (reverse proxy, tunnel, or another machine of a private network), the route accepts only peers on a private/loopback address whose Host name is pinned in the plugin's config — edit `~/.dsh/dsh-mac-computer-use.json` (create it if missing) and add your host name:
+
+```json
+{ "showCursor": true, "panelHosts": ["your-dsh-host"] }
+```
+
+Without the pin the card shows "Could not read the plugin status" even though the desktop tools work. Cross-site requests stay rejected either way; DSH's own authentication still guards the route. A plain local setup (browser on the same Mac) needs no config.
+
 **Build from source yourself** (only needed if you change the Swift code):
 
 ```bash
