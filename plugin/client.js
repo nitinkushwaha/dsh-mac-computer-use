@@ -31,7 +31,7 @@ window.__ModuleLoader__.load({
     const ROW = 'mac-computer-use'
     const NS = 'dsh-mac-computer-use'
     const ROUTE = '/dsh-mac-computer-use/panel'
-    const REPO = 'https://github.com/OrderG-X/dsh-mac-computer-use'
+    const REPO = 'https://github.com/nitinkushwaha/dsh-mac-computer-use'
 
     // placeholders use %x: avoids colliding with DSH's own {name} interpolation
     const zh = {

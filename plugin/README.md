@@ -31,4 +31,4 @@ It needs macOS 11 or later and runs on Apple silicon and Intel. The package ship
 
 **Update:** on DSH 0.2.2 or later, open the plugin on the Plugins page and click "Update to …". On older DSH, uninstall it and add it again. A new version can be installed about a day after it is released, because the pnpm that DSH uses skips brand-new versions by default.
 
-Full docs: https://github.com/OrderG-X/dsh-mac-computer-use
+Full docs: https://github.com/nitinkushwaha/dsh-mac-computer-use

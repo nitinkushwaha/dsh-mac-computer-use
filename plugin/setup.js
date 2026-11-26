@@ -37,10 +37,10 @@ const CANDIDATES = [
   ['dev', path.join(os.homedir(), 'Projects/dsh-cua-patched/tools/dsh-cu')],
 ].filter(([, p]) => p)
 
-export const INSTALL_CMD = 'git clone https://github.com/OrderG-X/dsh-mac-computer-use.git && cd dsh-mac-computer-use && ./install.sh'
+export const INSTALL_CMD = 'git clone https://github.com/nitinkushwaha/dsh-mac-computer-use.git && cd dsh-mac-computer-use && ./install.sh'
 
 /** Engine update: clone (or update) a source copy in the home directory and reinstall. A previous clone elsewhere does not matter; it always installs to ~/.dsh/bin */
-export const UPDATE_CMD = 'cd ~ && { [ -d dsh-mac-computer-use ] || git clone https://github.com/OrderG-X/dsh-mac-computer-use.git; } && cd dsh-mac-computer-use && git pull --ff-only && ./install.sh'
+export const UPDATE_CMD = 'cd ~ && { [ -d dsh-mac-computer-use ] || git clone https://github.com/nitinkushwaha/dsh-mac-computer-use.git; } && cd dsh-mac-computer-use && git pull --ff-only && ./install.sh'
 
 /** Engine features that keep the protocol version (dsh-cu features). Missing ones do not block use; the settings panel only shows an "engine update available" hint */
 export const ENGINE_FEATURES = ['window-shot']

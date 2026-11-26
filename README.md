@@ -3,7 +3,7 @@
 <img src="assets/hero.svg" alt="dsh-mac-computer-use — let DSH see the screen and drive your Mac" width="760" />
 
 <p>
-  <a href="https://github.com/OrderG-X/dsh-mac-computer-use/releases"><img src="https://img.shields.io/github/v/release/OrderG-X/dsh-mac-computer-use?label=release&color=4D6BFE" alt="release" /></a>
+  <a href="https://github.com/nitinkushwaha/dsh-mac-computer-use/releases"><img src="https://img.shields.io/github/v/release/nitinkushwaha/dsh-mac-computer-use?label=release&color=4D6BFE" alt="release" /></a>
   <img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT" />
   <a href="https://github.com/awesome-dsh-plugin/awesome-dsh-plugin"><img src="https://img.shields.io/badge/DSH-plugin-4D6BFE" alt="DSH plugin" /></a>
   <img src="https://img.shields.io/badge/platform-macOS-000000?logo=apple&logoColor=white" alt="macOS" />
@@ -17,7 +17,7 @@
 >
 > **When to use it:** "What's on my screen right now?", "Click this for me in that app" — and Mac software that has no command line and can only be driven with the mouse.
 >
-> **Install:** on the DSH **Plugins** page, click **Add plugin** and enter `dsh-mac-computer-use` (an npm package; if npm can't be reached it automatically falls back to a China mirror), then restart DSH. The package ships prebuilt binaries (Apple silicon and Intel, macOS 11+), so there is nothing to compile. macOS only.
+> **Install:** on the DSH **Plugins** page, click **Add plugin** and enter `dsh-mac-computer-use` (an npm package; if npm can't be reached it automatically falls back to a China mirror), then restart DSH. The package ships prebuilt binaries (Apple silicon and Intel, macOS 11+), so there is nothing to compile. macOS only. For this fork, install from the release bundle URL in [Install](#install) instead — the npm name points at the upstream original.
 
 > Previously named `dsh-cu`; renamed on 2026-10-18. Old links redirect here automatically, and the underlying command-line engine is still called `dsh-cu`.
 > This is not the same project as [dsh-computer-use](https://github.com/988hj7tczd-oss/dsh-computer-use): that one drives the accessibility tree (cua-driver), this one works from screenshots.
@@ -55,7 +55,7 @@ Most computer-use plugins already available on DSH (`dsh-computer-use`, `dsh-mac
 
 ## Install
 
-On the DSH **Plugins** page, click **Add plugin**, enter the package name `dsh-mac-computer-use`, then **restart DSH**. This is an npm package: when installed by name, DSH automatically switches to a China mirror (npmmirror) if the official npm registry is unreachable — nothing goes through GitHub. You can also enter the release bundle URL `https://github.com/OrderG-X/dsh-mac-computer-use/releases/latest/download/dsh-mac-computer-use.tgz`, which does require access to GitHub.
+On the DSH **Plugins** page, click **Add plugin**, enter the package name `dsh-mac-computer-use`, then **restart DSH**. This is an npm package: when installed by name, DSH automatically switches to a China mirror (npmmirror) if the official npm registry is unreachable — nothing goes through GitHub. On this fork, enter the release bundle URL `https://github.com/nitinkushwaha/dsh-mac-computer-use/releases/latest/download/dsh-mac-computer-use.tgz` instead (requires GitHub access) — installing by the npm name would fetch the original upstream package, not this fork.
 
 **Updating:** on DSH 0.2.2 and newer, open the plugin on the **Plugins** page and click **Update to …**; on older DSH versions, uninstall first, then add it again as above. A new release only becomes installable about a day after it is published (pnpm, which DSH uses to install plugins, refuses brand-new versions by default). In a hurry? Uninstall and install from the release bundle URL instead — though an install done that way cannot be updated with one click later.
 
@@ -66,7 +66,7 @@ Once installed, it shows up on the Plugins page as **Mac Desktop Control**. Open
 **Build from source yourself** (only needed if you change the Swift code):
 
 ```bash
-git clone https://github.com/OrderG-X/dsh-mac-computer-use.git
+git clone https://github.com/nitinkushwaha/dsh-mac-computer-use.git
 cd dsh-mac-computer-use
 ./install.sh
 ```
@@ -174,7 +174,7 @@ why that looks exactly like a driver bug, and the full day it took to confirm.
 
 ## Feedback
 
-Found a problem or want a new feature? [Open an issue](https://github.com/OrderG-X/dsh-mac-computer-use/issues/new/choose). Including your DSH version and plugin version makes fixes land fastest.
+Found a problem or want a new feature? [Open an issue](https://github.com/nitinkushwaha/dsh-mac-computer-use/issues/new/choose). Including your DSH version and plugin version makes fixes land fastest.
 
 ## License
 

@@ -5,10 +5,10 @@
   "description": "Vision-first Mac computer use for DSH: window list, screenshots, OCR text targeting, numbered elements, background clicks and typing. Works without the accessibility tree.",
   "license": "MIT",
   "author": "OrderG-X",
-  "homepage": "https://github.com/OrderG-X/dsh-mac-computer-use",
+  "homepage": "https://github.com/nitinkushwaha/dsh-mac-computer-use",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/OrderG-X/dsh-mac-computer-use.git",
+    "url": "git+https://github.com/nitinkushwaha/dsh-mac-computer-use.git",
     "directory": "plugin"
   },
   "exports": {
