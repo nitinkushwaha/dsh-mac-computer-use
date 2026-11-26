@@ -176,6 +176,16 @@ why that looks exactly like a driver bug, and the full day it took to confirm.
 
 Found a problem or want a new feature? [Open an issue](https://github.com/nitinkushwaha/dsh-mac-computer-use/issues/new/choose). Including your DSH version and plugin version makes fixes land fastest.
 
+## Maintaining this fork
+
+This repository is an English fork of [OrderG-X/dsh-mac-computer-use](https://github.com/OrderG-X/dsh-mac-computer-use), kept as the `upstream` remote so upstream updates can be merged in. After upstream publishes new commits:
+
+```bash
+./tools/sync-upstream.sh
+```
+
+The script fetches upstream, merges `upstream/main`, and lists every line that still contains Chinese so it can be re-translated (`--check` previews without merging). If a push does not trigger CI on this fork, start it manually with `gh workflow run ci.yml`.
+
 ## License
 
 MIT. `tools/dsh-cu.swift` is a self-contained single file — modify it directly if you like.
